@@ -46,7 +46,7 @@ def best_fit(X, Y):
     Yfit = [a + b * xi for xi in X]
     Xfit = X
 
-    r2_val = rsquared(Xfit, Yfit)
+    r2_val = rsquared(X, Y)
 
     print('best fit line:\ny = {:.2f} + {:.2f}x | R^2: {}'.format(a, b, r2_val))
     return Xfit, Yfit

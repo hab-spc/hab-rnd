@@ -202,7 +202,7 @@ class SPCParser(object):
                 if labels_uploaded:
                     dd = gr[label_col].value_counts().to_dict()
                 else:
-                    binned_times.append(grt['predictions'].sum())
+                    binned_times.append(grt['pred'].sum())
 
             # Grab other related info
             dd[pre+'avg_{}'.format(time_bin)] = np.mean(binned_times)

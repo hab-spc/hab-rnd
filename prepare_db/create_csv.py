@@ -154,12 +154,13 @@ def create_density_csv(output_dir, micro_csv, image_csv,
 
 # ====================== begin: create density ======================= #
 spc_v = '2017'
-data_dir = 'rawdata'
+rel_dir_flag = False
+data_dir = 'rawdata' if rel_dir_flag else '/data6/lekevin/hab-master/hab-rnd/rawdata'
 fname = os.path.join(data_dir, 'Density-all_data.csv')
 
 print('Creating density data')
 micro_csv = os.path.join(data_dir, "Micro_data.csv")
-image_csv = os.path.join(data_dir, "SPCImage{}_data.csv".format(spc_v))
+image_csv = os.path.join(data_dir, "Proro{}_data.csv".format(spc_v))
 create_density_csv(output_dir=data_dir, micro_csv=micro_csv, image_csv=image_csv,
                    log_fname='density-all_csv.log',
                    csv_fname='Density-all_data.csv',
