@@ -120,7 +120,7 @@ def create_density_csv(output_dir, micro_csv, image_csv,
 
     # Filter Image_data into filtered day estimates
     time_col = 'image_timestamp'
-    time_dist = ['1min', '5min', '15min', 'H', '1H30min']
+    time_dist = ['1min', '5min', '15min', '30min', 'H', '1H30min']
     time_img_data = SPCParser.get_time_density(image_data, time_col=time_col,
                                                time_bin=time_dist[0])
     for t in time_dist[1:]:
@@ -162,8 +162,8 @@ print('Creating density data')
 micro_csv = os.path.join(data_dir, "Micro_data.csv")
 image_csv = os.path.join(data_dir, "Proro{}_data.csv".format(spc_v))
 create_density_csv(output_dir=data_dir, micro_csv=micro_csv, image_csv=image_csv,
-                   log_fname='density-all_csv.log',
-                   csv_fname='Density-all_data.csv',
+                   log_fname='density-all_csv_1.log',
+                   csv_fname='Density-all_data_1.csv',
                    gtruth_available=False)
 
 # ====================== end: create density ======================= #

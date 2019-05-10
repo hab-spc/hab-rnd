@@ -10,6 +10,7 @@ import numpy as np
 
 # Project level imports
 from utils.logger import Logger
+from validate_exp.v_utils import plot_dist
 
 # Module level constants
 
@@ -155,7 +156,8 @@ class SPCParser(object):
         logger.debug('\n')
 
     @staticmethod
-    def get_time_density(data, time_col, time_bin, labels_uploaded=False):
+    def get_time_density(data, time_col, time_bin, labels_uploaded=False,
+                         plot=False):
         """Filter sampling time within dataframe
 
         Use case: filter a days worth of data down to 3 hour windows around
@@ -203,10 +205,15 @@ class SPCParser(object):
                     dd = gr[label_col].value_counts().to_dict()
                 else:
                     binned_times.append(grt['pred'].sum())
+                    logger.debug('\t Time bins: {}. SUM: {}'.format(i, grt['pred'].sum()))
 
             # Grab other related info
             dd[pre+'avg_{}'.format(time_bin)] = np.mean(binned_times)
             dd[pre+'std_{}'.format(time_bin)] = np.std(binned_times)
+            logger.debug(f'Time bin:{time_bin} (total smpls: {len(binned_times)})')
+
+            if plot:
+                plot_dist()
 
             # Append dict to dataframe
             new_df = new_df.append(pd.Series(dd), ignore_index=True)

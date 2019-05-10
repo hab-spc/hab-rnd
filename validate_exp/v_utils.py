@@ -107,6 +107,10 @@ def plot_results(X, Y, Yerr, Xfit, Yfit, best_fit_line=True, xlabel='',
             plt.plot(Xfit, Yfit, color='r')
             plt.xlim(0, max(X))
 
+def plot_dist(X):
+    import matplotlib.pyplot as plt
+
+
 
 def compute_imaged_volume(class_size=0.07):
     """Compute imaged volume given ROI size"""
