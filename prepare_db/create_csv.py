@@ -120,7 +120,7 @@ def create_density_csv(output_dir, micro_csv, image_csv,
 
     # Filter Image_data into filtered day estimates
     time_col = 'image_timestamp'
-    time_dist = ['1min', '5min', '15min', '30min', 'H', '1H30min']
+    time_dist = ['1min', '5min', '15min', '30min', '45min', '1h30min']
     time_img_data = SPCParser.get_time_density(image_data, time_col=time_col,
                                                time_bin=time_dist[0])
     for t in time_dist[1:]:
@@ -134,7 +134,7 @@ def create_density_csv(output_dir, micro_csv, image_csv,
 
     # Process Microscopy_data
     CSV_COLUMNS = '{},Prorocentrum micans (Cells/L),Total Phytoplankton (' \
-                  'Cells/L)'.format(time_col)
+                  'Cells/L),Time Collected (PST)'.format(time_col)
     micro_data = micro_data.rename(columns={'Datemm/dd/yy': time_col}, index=str)
     micro_data[time_col] = pd.to_datetime(micro_data[time_col]).dt.strftime('%Y-%m-%d')
     micro_data = micro_data[CSV_COLUMNS.split(',')]
