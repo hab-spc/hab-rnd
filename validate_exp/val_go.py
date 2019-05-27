@@ -17,7 +17,7 @@ PRORO_COLUMNS = ['micro_proro', 'corrected_Prorocentrum',
 PHYTO_COLUMNS = 'spc_ImgCount,micro_total-phyto'.split(',')
 
 # Initialize csv filename
-data_dir = '/data6/lekevin/hab-spc/experiments/plot_estimates'
+data_dir = '/data6/lekevin/hab-master/hab-rnd/rawdata'
 csv_fname = os.path.join(data_dir, 'Density-{}_data.csv')
 df = load_density_data(csv_fname.format('all'), micro_col=MICRO_COLUMNS)
 
@@ -40,13 +40,13 @@ for idx, t in enumerate(time_dist):
                'micro_proro']
 
     X, Y, Yerr, Xfit, Yfit = compute_values(columns, df, yerror=True,
-                                            geometric_fit=True)
+                                            geometric_fit=False)
     plot_results(X, Y, Yerr, Xfit, Yfit,
                  ax=ax, idx=0, n_rows=n_rows, n_cols=n_cols,
                  xlabel=xlabel, ylabel=ylabel, title=title)
 
     #     zoomed_df = df
-    zoomed_df = df[df.micro_proro < 15]
+    zoomed_df = df[df.micro_proro < 4]
     X, Y, Yerr, _, _ = compute_values(columns, zoomed_df, yerror=True)
     plot_results(X=X, Y=Y, Yerr=Yerr, Xfit=Xfit, Yfit=Yfit,
                  ax=ax, idx=1, n_rows=n_rows, n_cols=n_cols,

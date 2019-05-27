@@ -120,7 +120,7 @@ def create_density_csv(output_dir, micro_csv, image_csv,
 
     # Filter Image_data into filtered day estimates
     time_col = 'image_timestamp'
-    time_dist = ['1min', '5min', '15min', 'H', '1H30min']
+    time_dist = ['1min', '5min', '15min', '30min', '45min', '1h30min']
     time_img_data = SPCParser.get_time_density(image_data, time_col=time_col,
                                                time_bin=time_dist[0])
     for t in time_dist[1:]:
@@ -133,8 +133,7 @@ def create_density_csv(output_dir, micro_csv, image_csv,
         time_img_data = SPCParser.get_gtruth_counts(time_img_data)
 
     # Process Microscopy_data
-    CSV_COLUMNS = '{},Prorocentrum micans (Cells/L),Total Phytoplankton (' \
-                  'Cells/L)'.format(time_col)
+    CSV_COLUMNS = '{},Prorocentrum micans (Cells/L),Time Collected (PST)'.format(time_col)
     micro_data = micro_data.rename(columns={'Datemm/dd/yy': time_col}, index=str)
     micro_data[time_col] = pd.to_datetime(micro_data[time_col]).dt.strftime('%Y-%m-%d')
     micro_data = micro_data[CSV_COLUMNS.split(',')]
@@ -143,8 +142,7 @@ def create_density_csv(output_dir, micro_csv, image_csv,
     density_data = micro_data.merge(time_img_data, on=time_col)
 
     # Rename columns for simplicity
-    rename_dict = {'Prorocentrum micans (Cells/L)': 'micro_proro',
-                   'Total Phytoplankton (Cells/L)': 'micro_total-phyto'}
+    rename_dict = {'Prorocentrum micans (Cells/L)': 'micro_proro'}
     density_data = density_data.rename(columns=rename_dict, index=str)
 
     # Save as raw data
@@ -154,15 +152,14 @@ def create_density_csv(output_dir, micro_csv, image_csv,
 
 # ====================== begin: create density ======================= #
 spc_v = '2017'
-data_dir = 'rawdata'
-fname = os.path.join(data_dir, 'Density-all_data.csv')
-
+rel_dir_flag = False
+root_dir = 'rawdata' if rel_dir_flag else '/data6/lekevin/hab-master/hab-rnd/rawdata'
 print('Creating density data')
-micro_csv = os.path.join(data_dir, "Micro_data.csv")
-image_csv = os.path.join(data_dir, "SPCImage{}_data.csv".format(spc_v))
-create_density_csv(output_dir=data_dir, micro_csv=micro_csv, image_csv=image_csv,
-                   log_fname='density-all_csv.log',
-                   csv_fname='Density-all_data.csv',
+micro_csv = os.path.join(root_dir, "Micro-all_data.csv")
+image_csv = os.path.join(root_dir, "SPC-all_data.csv".format(spc_v))
+create_density_csv(output_dir=root_dir, micro_csv=micro_csv, image_csv=image_csv,
+                   log_fname='Density17-18-all_data.log',
+                   csv_fname='Density17-18-all_data.csv',
                    gtruth_available=False)
 
 # ====================== end: create density ======================= #
