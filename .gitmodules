@@ -1,0 +1,4 @@
+[submodule "hab-ml"]
+	path = hab-ml
+	url = https://github.com/hab-spc/hab-ml.git
+	branch = master
