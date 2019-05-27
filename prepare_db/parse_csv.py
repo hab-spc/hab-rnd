@@ -10,6 +10,7 @@ import numpy as np
 
 # Project level imports
 from utils.logger import Logger
+from validate_exp.v_utils import plot_dist
 
 # Module level constants
 
@@ -155,7 +156,8 @@ class SPCParser(object):
         logger.debug('\n')
 
     @staticmethod
-    def get_time_density(data, time_col, time_bin, labels_uploaded=False):
+    def get_time_density(data, time_col, time_bin, labels_uploaded=False,
+                         plot=False):
         """Filter sampling time within dataframe
 
         Use case: filter a days worth of data down to 3 hour windows around
@@ -174,10 +176,8 @@ class SPCParser(object):
         Returns:
 
         """
-        df, logger = SPCParser.initialize_parsing(data, task_name='filter-time')
-        SPCParser.distribution_report(df, time_col, logger)
-
-        label_col = 'user_labels'
+        import datetime
+        df, logger = SPCParser.initialize_parsing(data, task_name='get-time-density')
 
         def parse_timestamp(x):
             """Parses example fmt: 'Sat Dec 23 10:01:24 2017 PST' """
@@ -190,30 +190,50 @@ class SPCParser(object):
         grouped_df = df.groupby('Date')
         new_df = pd.DataFrame()
         pre = 'clsfier_proro_'
+        freq = time_bin
         for ii, gr in grouped_df:
+            minTime = gr[time_col].min()
+            maxTime = gr[time_col].max()
+            deltaT = pd.Timedelta(freq)
 
-            #TODO change to make sure 5 min bins
-            gr = gr.groupby(gr[time_col].dt.floor('{}'.format(time_bin)))
+            minTime -= deltaT - (maxTime - minTime) % deltaT
+            r = pd.date_range(start=minTime, end=maxTime, freq=freq)
+
+            groups = gr.groupby(pd.cut(gr[time_col], r)).agg('sum')
+
+            if ii == datetime.date(2017, 3, 27):
+                groups = groups.drop(groups.index[0])
+
+            pred = groups['pred'].describe()
             dd = {time_col: ii}
-            binned_times = []
-            for i, grt in gr:
+            total_bins = groups.shape[0]
+            dd[pre + 'avg_{}'.format(time_bin)] = pred['mean']
+            dd[pre + 'std_{}'.format(time_bin)] = pred['std']
+            dd[pre + 'total_smpl_{}'.format(time_bin)] = total_bins
 
-                # Get cell counts from either label or prediction col
-                if labels_uploaded:
-                    dd = gr[label_col].value_counts().to_dict()
-                else:
-                    binned_times.append(grt['predictions'].sum())
+            logger.debug('=' * 25 + f' Time Stamp: {ii} ' + '=' * 25)
+            logger.debug(f'Start time: {minTime} | End time: {maxTime}')
+            logger.debug('Total time bins: {}\n'.format(total_bins))
+            logger.debug('Summarized detection statistics within time intervals')
+            logger.debug(pred)
+            logger.debug('{}'.format(groups[['pred']]))
 
-            # Grab other related info
-            dd[pre+'avg_{}'.format(time_bin)] = np.mean(binned_times)
-            dd[pre+'std_{}'.format(time_bin)] = np.std(binned_times)
-
-            # Append dict to dataframe
             new_df = new_df.append(pd.Series(dd), ignore_index=True)
+
+        logger.debug('=' * 25 + ' FINAL RESULTS ' + '=' * 25)
+        logger.debug(f'Time bin: {freq}')
+        logger.debug('Total time samples: {}'.format(
+            new_df['image_timestamp'].nunique()))
+        logger.debug('Avg number of time bins: {}'.format(
+            new_df[pre + 'total_smpl_{}'.format(time_bin)].mean()))
+        logger.debug('Avg detection: {}'.format(
+            new_df[pre + 'avg_{}'.format(time_bin)].mean()))
+        logger.debug('Std dev detection: {}'.format(
+            new_df[pre + 'avg_{}'.format(time_bin)].std()))
 
         new_df = new_df.fillna(0)
 
-        logger.debug('After filtering')
+        logger.debug('Generated Dataframe')
         logger.debug(new_df.head())
         return new_df
 
