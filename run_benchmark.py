@@ -27,9 +27,10 @@ from utils.logger import Logger
 
 # Module level constants
 DATA_DIR = 'rawdata'
-MICRO_CSV = os.path.join(DATA_DIR, 'Micro-{}.csv'.format('Prorocentrum_20190523-20190610'))
-INSITU_CSV = os.path.join(DATA_DIR, 'SPC-{}.csv'.format('Prorocentrum_20190523-20190610'))
-LAB_CSV = os.path.join(DATA_DIR, 'LAB-all_data.csv')
+VERSION = 'Prorocentrum_20190523-0610'
+MICRO_CSV = os.path.join(DATA_DIR, 'Micro-{}.csv'.format(VERSION))
+INSITU_CSV = os.path.join(DATA_DIR, 'SPC-{}.csv'.format(VERSION))
+LAB_CSV = os.path.join(DATA_DIR, 'LAB-{}.csv'.format(VERSION))
 
 def get_predicted_insitu_images():
     """
@@ -69,6 +70,31 @@ def get_predicted_insitu_images():
     deploy(opt, logger)
 
 
+def get_predicted_invitro_images(save=False):
+    # Get common dates between Microscopy csv and available lab images
+    hab_db = '/data6/phytoplankton-db/'
+    df = pd.read_csv(MICRO_CSV)
+    dates = pd.to_datetime(df['Datemm/dd/yy']).dt.strftime('%Y%m%d').to_list()
+    lab_df = pd.DataFrame()
+    image_dir = os.path.join(hab_db, 'hab_in_vitro/images')
+    for date in dates:
+        rel_path = '001/00000_static_html'
+        pred_json = os.path.join(image_dir, date, rel_path, 'gtruth.json')
+        csv_fname = os.path.join(image_dir, date, rel_path, 'features.csv')
+
+        # join predictions into features.csv
+
+        # concat into LAB CSV
+        try:
+            lab_df = lab_df.append(pd.read_csv(csv_fname))
+        except FileNotFoundError:
+            print('File does not exist: {}'.format(csv_fname))
+            continue
+
+    if save:
+        lab_df.to_csv(LAB_CSV, index=False)
+
+
 def main():
     # Get available dates and sample times
     assert os.path.exists(MICRO_CSV), 'Ensure microscopy csv exists'
@@ -76,9 +102,18 @@ def main():
     # Get in situ data
     get_predicted_insitu_images()
 
-
+    # Get in vitro data
+    get_predicted_invitro_images()
 
     # Create density csv file
+    create_density_csv(output_dir=DATA_DIR,
+                       micro_csv=MICRO_CSV,
+                       image_csv=INSITU_CSV,
+                       log_fname='Density-{}.log'.format(VERSION),
+                       csv_fname='Density-{}.csv'.format(VERSION))
+
+
+
 
 if __name__ == '__main__':
     main()

@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 
 # Project level imports
-from utils.logger import Logger
+from prepare_db.logger import Logger
 from validate_exp.v_utils import plot_dist
 
 # Module level constants
@@ -157,7 +157,7 @@ class SPCParser(object):
 
     @staticmethod
     def get_time_density(data, time_col, time_bin, labels_uploaded=False,
-                         plot=False):
+                         plot=False, insitu=False):
         """Filter sampling time within dataframe
 
         Use case: filter a days worth of data down to 3 hour windows around
@@ -182,14 +182,17 @@ class SPCParser(object):
         def parse_timestamp(x):
             """Parses example fmt: 'Sat Dec 23 10:01:24 2017 PST' """
             return ' '.join(x.split(' ')[1:-1])
-
-        df[time_col] = df[time_col].apply(parse_timestamp)
+        if insitu:
+            df[time_col] = df[time_col].apply(parse_timestamp)
         df[time_col] = pd.to_datetime(df[time_col], infer_datetime_format=True)
 
         df['Date'] = df[time_col].dt.date
         grouped_df = df.groupby('Date')
         new_df = pd.DataFrame()
-        pre = 'clsfier_proro_'
+        if insitu:
+            pre = 'insitu_pred_proro_'
+        else:
+            pre = 'invitro_pred_proro'
         freq = time_bin
         for ii, gr in grouped_df:
             minTime = gr[time_col].min()
@@ -210,6 +213,7 @@ class SPCParser(object):
             dd[pre + 'avg_{}'.format(time_bin)] = pred['mean']
             dd[pre + 'std_{}'.format(time_bin)] = pred['std']
             dd[pre + 'total_smpl_{}'.format(time_bin)] = total_bins
+            dd[pre + 'sum_{}'.format(time_bin)] = pred.sum()
 
             logger.debug('=' * 25 + f' Time Stamp: {ii} ' + '=' * 25)
             logger.debug(f'Start time: {minTime} | End time: {maxTime}')
