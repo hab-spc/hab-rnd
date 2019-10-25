@@ -1,18 +1,163 @@
 """ """
+import json
 # Standard dist imports
 import logging
 import os
-import re
 
+import numpy as np
 # Third party imports
 import pandas as pd
-import numpy as np
 
 # Project level imports
-from utils.logger import Logger
-from validate_exp.v_utils import plot_dist
+from prepare_db.logger import Logger
+
 
 # Module level constants
+
+def get_time_density(data, time_col, time_freq, num_of_classes=2,
+                     labels_uploaded=False, plot=False, insitu=False, save_dir=None):
+    """Filter sampling time within dataframe
+
+    Use case: filter a days worth of data down to 3 hour windows around
+    the microscopy time (1 hour before, 1 hour interim, 1 hour after)
+
+        Function currently groups estimates by the day. We need to be
+        bale to do this for multiple time options (i.e. 5 minute
+        estimates, 10 minute estimates, etc.)
+
+    #TODO get rid of all string hard-codings in the script
+
+    Args:
+        data (pd.Dataframe): Dataframe to filter
+        time_col (str): Name of time column to filter
+
+    Returns:
+
+    """
+    df, logger = SPCParser.initialize_parsing(data, task_name='get-time-density')
+
+    def parse_timestamp(x):
+        """Parses example fmt: 'Sat Dec 23 10:01:24 2017 PST' """
+        return ' '.join(x.split(' ')[1:-1])
+
+    # Convert time column as datetime object
+    if insitu:
+        df[time_col] = df[time_col].apply(parse_timestamp)
+    df[time_col] = pd.to_datetime(df[time_col], infer_datetime_format=True)
+
+    # Group data by dates
+    df['Date'] = df[time_col].dt.date
+    grouped_dates_df = df.groupby('Date')
+
+    # Get time density for each date and store back into dataframe
+    time_density_df = pd.DataFrame()
+    for ii, date_df in grouped_dates_df:
+        logger.debug('=' * 25 + f' Time Stamp: {ii} ' + '=' * 25)
+
+        # Calculate time bins
+        maxTime, minTime, bins = SPCParser.calculate_time_bins(
+            data=date_df, time_col=time_col, time_freq=time_freq)
+        logger.debug(f'Start time: {minTime} | End time: {maxTime}')
+
+        # Group the predictions w.r.t to each time bin
+        grouped_time_bins = date_df.groupby(pd.cut(date_df[time_col], bins))['pred']
+
+        # Create new dataframe for holding the grouped predictions
+        dff = SPCParser.transpose_prediction_counts(grouped_time_bins=grouped_time_bins,
+                                                    num_of_classes=num_of_classes,
+                                                    save_dir=save_dir, insitu=insitu)
+
+        # Calculate average and std dev
+        dd = {time_col: ii}
+        pre = 'pier_' if insitu else 'lab_'
+        total_bins = grouped_time_bins.ngroups
+        for cls_idx in range(0, num_of_classes):
+            pred = dff[cls_idx].describe()
+            dd[pre + str(cls_idx) + '_avg_{}'.format(time_freq)] = pred['mean']
+            dd[pre + str(cls_idx) + '_std_{}'.format(time_freq)] = pred['std']
+
+        def print_full(x):
+            pd.set_option('display.max_rows', len(x))
+            pd.set_option('display.max_columns', None)
+            pd.set_option('display.width', 2000)
+            pd.set_option('display.float_format', '{:20,.2f}'.format)
+            pd.set_option('display.max_colwidth', -1)
+            logger.debug(x)
+            pd.reset_option('display.max_rows')
+            pd.reset_option('display.max_columns')
+            pd.reset_option('display.width')
+            pd.reset_option('display.float_format')
+            pd.reset_option('display.max_colwidth')
+
+        logger.debug('Total time bins: {}\n'.format(total_bins))
+        print_full(dff.describe())
+        time_density_df = time_density_df.append(pd.Series(dd), ignore_index=True)
+
+    time_density_df = time_density_df.fillna(0)
+
+    logger.info('Generated Dataframe')
+    logger.info(time_density_df.head())
+    return time_density_df
+
+
+def get_lab_data(date_dir=None):
+    """ Get lab dataframe given a lab imaging directory date
+
+    Contains image abs path and any previous predictions generated for the lab image directory.
+    Also extracts image date and time for research purposes
+
+    Args:
+        date_dir (str): Abs path to the date directory
+            Examples: `/data6/phytoplankton-db/hab_in_vitro/images/20190520`
+
+    Returns:
+        pd.DataFrame: merged dataframe between meta data and predictions
+
+    """
+    logger = logging.getLogger('get_lab_data')
+    data_file = os.path.join(date_dir, '{}')
+    try:
+        # Read in files and preprocess
+        label_col = 'label'
+        pred = json.load(open(data_file.format('predictions.json'), 'rb'))
+        meta_df = pd.read_csv(data_file.format('features.tsv'), sep='\t')
+    except:
+        try:
+            meta_df = pd.read_csv(data_file.format('features.csv'))
+        except:
+            logger.error(f'ERROR: Meta data not found for {date_dir}')
+            return None
+
+    # Create image id to conduct merging
+    meta_df = meta_df[meta_df.columns.values[:11]]
+    meta_df['image_id'] = meta_df['url'].apply(
+        lambda x: os.path.basename(x).replace('.jpeg', '.tif'))
+
+    # Preprocess prediction json
+    pred_df = pd.DataFrame(pred['machine_labels'])
+    pred_df = pred_df.rename({'gtruth': label_col}, axis=1)
+
+    # Merge based off image_id
+    merged = meta_df.merge(pred_df, on='image_id')
+    if pred_df.shape[0] != meta_df.shape[0]:
+        logger.warning(
+            'Inconsistency between meta and predictions {} vs {} for date {}'.format(meta_df.shape[0], pred_df.shape[0],
+                                                                                     date_dir))
+
+    # Extract image date and times
+    # use case is more for sampling correlation plots
+    merged['image_timestamp'] = pd.to_datetime(merged['timestamp'])
+    merged['image_date'] = merged['image_timestamp'].dt.date
+    merged['image_time'] = merged['image_timestamp'].dt.time
+    merged = merged.drop(['timestamp'], axis=1)
+
+    # Add deployment required columns and create abspath to images
+    merged['user_labels'] = '[]'
+    merged['images'] = merged['url'].apply(lambda x: os.path.join(date_dir, 'static', x))
+    merged = merged.drop('url', axis=1)
+
+    return merged
+
 
 class SPCParser(object):
     """Parse SPC image streaming api data
@@ -23,117 +168,122 @@ class SPCParser(object):
     ALSO this is more for validating correlation graphs atm
 
     """
-    @staticmethod
-    def create_img_id(x):
-        return os.path.basename(x).split('.')[0] + '.tif'
 
-    @staticmethod
-    def clean_labels(data, label_col):
-        """Specialized cleaning for Prorocentrum labels ONLY
+    def __init__(self, csv_fname=None, json_fname=None, classes=None, save=False):
+        """ Initializes SPCParsing instance to extract data from dataset
 
-        #TODO function to write up if needed when cleaning up labels from SPICI
-
+        Args:
+            csv_fname (str): Abs path to the csv file (dataset)
+            json_fname (str): Abs path to the json file containing predictions
+            classes (str): Abs path to the training.log that contains the classes
+            save (bool): Flag to save the merged dataset
         """
-        #TODO clean up labels other than prorocentrums
-        df, logger = SPCParser.initialize_parsing(data, 'clean-labels')
+        if csv_fname:
+            self.csv_fname = csv_fname
+            self.dataset = pd.read_csv(csv_fname)
 
-        # change all [] as Non-Prorocentrum
-        # anything with a false prorocentrum, replace as a false-prorocentrum
-        # get rid of everything else
+        if json_fname:
+            self.json = json.load(open(json_fname, 'rb'))
 
-        def clean_up(lbl, tag):
-            if not lbl:
-                if not tag:
-                    return 'Unidentified'
-                else:
-                    return 'Non-Prorocentrum'
-            elif 'False Prorocentrum' in lbl or \
-                    'Prorocentrum_false_positiveal' in lbl:
-                return 'False Prorocentrum'
-            elif lbl[0] in ['Prorocentrum', 'False Non-Prorocentrum']:
-                return lbl[0]
-            else:
-                return 'Non-Prorocentrum'
+        if csv_fname and json_fname:
+            self.dataset = self.merge_dataset(save=save)
 
-        df[label_col] = df.apply(lambda x: clean_up(x[label_col],
-                                                    x['tags']), axis=1)
-        logger.debug('After cleaning')
-        SPCParser.distribution_report(df, label_col, logger)
-        return df
+        if classes:
+            self.cls2idx, self.idx2cls = self.get_classes(classes)
+
+        # Get the hab species of interest for class filtering
+        self.hab_species = open('/data6/phytoplankton-db/hab.txt', 'r').read().splitlines()
+
+    def merge_dataset(self, save=False):
+        # Drop outdated `label` column (used as gtruth in machine learning exp)
+        label_col = 'label'
+        meta_df = self.dataset.copy()
+        meta_df = meta_df.rename({'timestamp': 'image_timestamp'})
+
+        # Preprocess prediction json
+        pred_df = pd.DataFrame(self.json['machine_labels'])
+        pred_df = pred_df.rename({'gtruth': label_col}, axis=1)
+        pred_df['image_id'] = pred_df['image_id'].apply(SPCParser.extract_img_id)
+
+        # Merge based off image_id
+        merged = meta_df.merge(pred_df, on='image_id')
+
+        # Overwrite previous csv file with new gtruth
+        if save:
+            csv_fname = self.csv_fname.split('.')[0] + '-predictions.csv'
+            print(f'Saved as {csv_fname}')
+            merged.to_csv(csv_fname, index=False)
+        return merged
+
+    def get_gtruth(self, gtruth_col='label', verbose=False):
+        """Get the gtruth distributions"""
+        if verbose:
+            print(self.dataset[gtruth_col].value_counts())
+        self.gtruth = self.dataset[gtruth_col].tolist()
+
+    def get_predictions(self, pred_col='pred', verbose=False):
+        """Get the prediction distribution"""
+        if verbose:
+            print(self.dataset[pred_col].value_counts())
+        self.pred = self.dataset[pred_col].tolist()
+
+    def get_classes(self, filename):
+        """Set class2idx, idx2class encoding/decoding dictionaries"""
+        class_list = SPCParser._parse_classes(filename)
+        cls2idx = {i: idx for idx, i in enumerate(sorted(class_list))}
+        idx2cls = {idx: i for idx, i in enumerate(sorted(class_list))}
+        return cls2idx, idx2cls
+
+    def filter_classes(self, micro_data):
+        """Take out any NaN, nonHAB and untrained classes"""
+        # drop nan classes
+        df1 = micro_data.copy()
+        nan_classes = df1.columns[df1.isna().all()].tolist()
+        df1 = df1.drop(nan_classes, axis=1)
+        print(f'NaN classes dropped: {sorted(nan_classes)}')
+
+        # filter nonHAB classes
+        hab = sorted(list(set(df1.columns).intersection(self.hab_species)))
+        df1 = df1[list(micro_data.columns[:3]) + hab]
+        print(f'NonHAB classes dropped: {set(self.hab_species).difference(hab)}')
+
+        # combine any classes
+        trained_classes = sorted(list(set(self.cls2idx.keys()).intersection(set(df1.columns))))
+        print(f'Untrained classes dropped: {set(df1.columns.difference(trained_classes))}')
+        df1 = df1[list(micro_data.columns[:3]) + trained_classes]
+
+        trained_classes = {i: self.cls2idx[i] for i in trained_classes}
+        pre = 'micro_{}'
+        for k, v in trained_classes.items():
+            df1.rename({k: pre.format(v)}, axis=1, inplace=True)
+
+        return df1, trained_classes
 
     @staticmethod
-    def extract_dateinfo(data, date_col, drop=True, time=False,
-                         start_ref=pd.datetime(1900, 1, 1),
-                         extra_attr=False):
-        df = data.copy()
+    def _parse_classes(filename):
+        """Parse MODE_data.info file"""
+        lbs_all_classes = []
+        with open(filename, 'r') as f:
+            label_counts = f.readlines()
+        label_counts = label_counts[:-1]
+        for i in label_counts:
+            class_counts = i.strip()
+            class_counts = class_counts.split()
+            class_name = ''
+            for j in class_counts:
+                if not j.isdigit():
+                    class_name += (' ' + j)
+            class_name = class_name.strip()
+            lbs_all_classes.append(class_name)
+        return lbs_all_classes
 
-        # Extract the field
-        def parse_timestamp(x):
-            """Parses example fmt: 'Sat Dec 23 10:01:24 2017 PST' """
-            return ' '.join(x.split(' ')[1:-1])
+    @staticmethod
+    def extract_top_k(x):
+        prob = eval(x)
 
-        fld = df[date_col].apply(parse_timestamp)
-
-        # Check the time
-        fld_dtype = fld.dtype
-        if isinstance(fld_dtype, pd.core.dtypes.dtypes.DatetimeTZDtype):
-            fld_dtype = np.datetime64
-
-        # Convert to datetime if not already
-        if not np.issubdtype(fld_dtype, np.datetime64):
-            df[date_col] = fld = pd.to_datetime(fld,
-                                                infer_datetime_format=True)
-
-        # Prefix for new columns
-        pre = re.sub('[Dd]ate', '', '')
-        pre = re.sub('[Tt]ime', '', pre)
-
-        # Basic attributes
-        attr = ['Date', 'Time', 'Year', 'Month', 'Week', 'Day', 'Dayofweek',
-                'Dayofyear', 'Days_in_month', 'is_leap_year']
-
-        # Additional attributes
-        if extra_attr:
-            attr = attr + ['Is_month_end', 'Is_month_start',
-                           'Is_quarter_end',
-                           'Is_quarter_start', 'Is_year_end',
-                           'Is_year_start']
-
-        # If time is specified, extract time information
-        if time:
-            attr = attr + ['Hour', 'Minute', 'Second']
-
-        # Iterate through each attribute
-        for n in attr:
-            df[n] = getattr(fld.dt, n.lower())
-
-        # Calculate days in year
-        df['Days_in_year'] = df['is_leap_year'] + 365
-
-        if time:
-            # Add fractional time of day (0 - 1) units of day
-            df[pre + 'frac_day'] = ((df[pre + 'Hour']) + (
-                    df[pre + 'Minute'] / 60) + (df[pre + 'Second'] / 60 / 60)) / 24
-
-            # Add fractional time of week (0 - 1) units of week
-            df[pre + 'frac_week'] = (df[pre + 'Dayofweek'] + df[
-                pre + 'frac_day']) / 7
-
-            # Add fractional time of month (0 - 1) units of month
-            df[pre + 'frac_month'] = (df[pre + 'Day'] + (
-                df[pre + 'frac_day'])) / (df[pre + 'Days_in_month'] + 1)
-
-            # Add fractional time of year (0 - 1) units of year
-            df[pre + 'frac_year'] = (df[pre + 'Dayofyear'] + df[
-                pre + 'frac_day']) / (df[pre + 'Days_in_year'] + 1)
-
-            # Add seconds since start of reference
-        df[pre + 'Elapsed'] = (fld - start_ref).dt.total_seconds()
-
-        if drop:
-            df = df.drop(date_col, axis=1)
-
-        return df
+    @staticmethod
+    def extract_img_id(x):
+        return os.path.basename(x).split('.')[0] + '.tif'
 
     @staticmethod
     def initialize_parsing(data, task_name=None):
@@ -142,6 +292,7 @@ class SPCParser(object):
         """
         df = data.copy()
         logger = logging.getLogger(task_name)
+        logger.setLevel(logging.INFO)
         Logger.section_break(task_name)
         return df, logger
 
@@ -154,88 +305,6 @@ class SPCParser(object):
         logger.debug('{} distribution | size: {}'.format(column, df.shape))
         logger.debug(df[column].value_counts())
         logger.debug('\n')
-
-    @staticmethod
-    def get_time_density(data, time_col, time_bin, labels_uploaded=False,
-                         plot=False):
-        """Filter sampling time within dataframe
-
-        Use case: filter a days worth of data down to 3 hour windows around
-        the microscopy time (1 hour before, 1 hour interim, 1 hour after)
-
-            Function currently groups estimates by the day. We need to be
-            bale to do this for multiple time options (i.e. 5 minute
-            estimates, 10 minute estimates, etc.)
-
-        #TODO get rid of all string hard-codings in the script
-
-        Args:
-            data (pd.Dataframe): Dataframe to filter
-            time_col (str): Name of time column to filter
-
-        Returns:
-
-        """
-        import datetime
-        df, logger = SPCParser.initialize_parsing(data, task_name='get-time-density')
-
-        def parse_timestamp(x):
-            """Parses example fmt: 'Sat Dec 23 10:01:24 2017 PST' """
-            return ' '.join(x.split(' ')[1:-1])
-
-        df[time_col] = df[time_col].apply(parse_timestamp)
-        df[time_col] = pd.to_datetime(df[time_col], infer_datetime_format=True)
-
-        df['Date'] = df[time_col].dt.date
-        grouped_df = df.groupby('Date')
-        new_df = pd.DataFrame()
-        pre = 'clsfier_proro_'
-        freq = time_bin
-        for ii, gr in grouped_df:
-            minTime = gr[time_col].min()
-            maxTime = gr[time_col].max()
-            deltaT = pd.Timedelta(freq)
-
-            minTime -= deltaT - (maxTime - minTime) % deltaT
-            r = pd.date_range(start=minTime, end=maxTime, freq=freq)
-
-            groups = gr.groupby(pd.cut(gr[time_col], r)).agg('sum')
-
-            if ii == datetime.date(2017, 3, 27):
-                groups = groups.drop(groups.index[0])
-
-            pred = groups['pred'].describe()
-            dd = {time_col: ii}
-            total_bins = groups.shape[0]
-            dd[pre + 'avg_{}'.format(time_bin)] = pred['mean']
-            dd[pre + 'std_{}'.format(time_bin)] = pred['std']
-            dd[pre + 'total_smpl_{}'.format(time_bin)] = total_bins
-
-            logger.debug('=' * 25 + f' Time Stamp: {ii} ' + '=' * 25)
-            logger.debug(f'Start time: {minTime} | End time: {maxTime}')
-            logger.debug('Total time bins: {}\n'.format(total_bins))
-            logger.debug('Summarized detection statistics within time intervals')
-            logger.debug(pred)
-            logger.debug('{}'.format(groups[['pred']]))
-
-            new_df = new_df.append(pd.Series(dd), ignore_index=True)
-
-        logger.debug('=' * 25 + ' FINAL RESULTS ' + '=' * 25)
-        logger.debug(f'Time bin: {freq}')
-        logger.debug('Total time samples: {}'.format(
-            new_df['image_timestamp'].nunique()))
-        logger.debug('Avg number of time bins: {}'.format(
-            new_df[pre + 'total_smpl_{}'.format(time_bin)].mean()))
-        logger.debug('Avg detection: {}'.format(
-            new_df[pre + 'avg_{}'.format(time_bin)].mean()))
-        logger.debug('Std dev detection: {}'.format(
-            new_df[pre + 'avg_{}'.format(time_bin)].std()))
-
-        new_df = new_df.fillna(0)
-
-        logger.debug('Generated Dataframe')
-        logger.debug(new_df.head())
-        return new_df
 
     @staticmethod
     def get_gtruth_counts(data):
@@ -281,92 +350,37 @@ class SPCParser(object):
         return imaged_vol
 
     @staticmethod
-    def compute_vol_density(x):
-        img_vol = SPCParser.compute_imaged_volume(class_size=0.07)
-        frame_rate = 8
-        return x / (frame_rate * img_vol * 24*3600)
+    def calculate_time_bins(data, time_col, time_freq):
+        # Get minimum and maximum prior to binning
+        minTime = data[time_col].min()
+        maxTime = data[time_col].max()
+        deltaT = pd.Timedelta(time_freq)
+
+        # Calculate time range w.r.t to bin
+        minTime -= deltaT - (maxTime - minTime) % deltaT
+        bins = pd.date_range(start=minTime, end=maxTime, freq=time_freq)
+        return maxTime, minTime, bins
 
     @staticmethod
-    def compute_time_density(x):
-        """Convert image count into rate of cell/time"""
-        return x
+    def transpose_prediction_counts(grouped_time_bins, num_of_classes, save_dir, insitu=False):
+        # Create new dataframe for holding the grouped predictions
+        dff = pd.DataFrame(columns=['time'] + list(range(0, num_of_classes)))
 
-    @staticmethod
-    def filter_annotator():
-        pass
+        # Traverse through groups and store counts into new dataframe
+        # dates by predicted class count matrix
+        for idx, (i, tt) in enumerate(grouped_time_bins):
+            d = np.zeros((1, num_of_classes))
+            tt_dict = tt.value_counts().to_dict()
+            for k, v in tt_dict.items():
+                d[:, k] = v
+            ll = [i] + d[0, :].tolist()
+            dff.loc[idx] = ll
 
-    """BEGIN ARCHIVED SCRAP"""
-    @staticmethod
-    def list_items2rows(df, column):
-        """
+        if save_dir:
+            date_fname = i.left._date_repr + '{}_pred_counts.csv'.format('in_situ' if insitu else 'in_vitro')
+            abs_dir = os.path.join(save_dir, 'counts')
+            if not os.path.exists(abs_dir):
+                os.makedirs(abs_dir)
+            dff.to_csv(os.path.join(abs_dir, date_fname), index=False)
 
-        Drops unknown labels
-        #TODO need to replace NaN values with unknown label
-
-        Args:
-            df: (pd.Dataframe)
-            column: (str)
-
-        Returns:
-            pd.Dataframe
-
-        """
-        logger = logging.getLogger('list_item2rows')
-        Logger.section_break('list_item2rows')
-        df_ = df.copy()
-        SPCParser.distribution_report(df_, column, logger)
-
-        leftover_col = df_.columns.tolist()
-        leftover_col.remove(column)
-        df_[column] = df_[column].apply(lambda x: eval(x))
-        df_ = df_[column].apply(pd.Series) \
-            .merge(df_, right_index=True, left_index=True) \
-            .drop([column], axis=1) \
-            .melt(id_vars=leftover_col,
-                  value_name=column[:-1]) \
-            .drop("variable", axis=1) \
-            .dropna()
-        SPCParser.distribution_report(df_, column[:-1], logger)
-
-        return df_
-
-    @staticmethod #ARCHIVED SCRAP
-    def filter_label(df, column, label):
-        """Filters labels on a single basis
-
-        assumes that each row is a single item rather than list like
-        original data
-        #ToDo how to handle false positive, false negative
-        #ToDO how to handle multiple labels
-
-        """
-        df_ = df.copy()
-        logger = logging.getLogger('filter_label')
-        Logger.section_break('filter_label')
-        logger.debug('Filtering by label {}'.format(label))
-        SPCParser.distribution_report(df_, column, logger)
-        df_ = df_[df_[column] == label].reset_index(drop=True)
-        logger.debug('After filtering')
-        SPCParser.distribution_report(df_, column, logger)
-
-        return df_
-
-    @staticmethod #ARCHIVED SCRAP
-    def filter_labels(data, label_col, labels=['Prorocentrum']):
-        df, logger = SPCParser.initialize_parsing(data,
-                                                  task_name='filter-labels')
-        SPCParser.distribution_report(df, label_col, logger)
-
-        grouped_df = df.groupby(label_col)
-        filtered_df = pd.DataFrame()
-        for gr in grouped_df.groups.keys():
-            if eval(gr) in labels:
-                filtered_df = filtered_df.append(grouped_df.get_group(gr))
-        filtered_df = filtered_df.reset_index(drop=True)
-        logger.debug('After filtering')
-        SPCParser.distribution_report(filtered_df, label_col, logger)
-        return filtered_df
-    """END: ARCHIVED SCRAP"""
-
-
-
+        return dff

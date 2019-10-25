@@ -11,15 +11,13 @@ at once
 import glob
 import logging
 import os
-import re
-import sys
+from pprint import pformat
 
 # Third party imports
-import numpy as np
 import pandas as pd
 
 # Project level imports
-#TODO log dataset statistics from this
+# TODO log dataset statistics from this
 from prepare_db.logger import Logger
 from prepare_db.parse_csv import SPCParser, get_time_density, get_lab_data
 
@@ -28,35 +26,43 @@ ROOT_DIR = '/data6/phytoplankton-db'
 LAB_IMG_DIR = f'{ROOT_DIR}/hab_in_vitro/images'
 META_DATA = '{date}/001/00000_static_html'
 
+"""WHEN USING NEW MODEL, UPDATE THIS"""
+CLASSES_INFO = '/data6/lekevin/hab-master/hab_rnd/hab-ml/experiments/hab_model_v1:20191023/train_data.info'
+
 def main():
-    # create_proro_csv()
+    i = 0
+    # spc_v = '-all_data' # outdated
+    # spc_v = '-20Class_17-18' # outdated
+    """Uncomment to create a density csv file to do sampling correlations"""
+    spc_v = '-20Class_2017_2019'
+    spc_v = '-20Class_summer2019'
 
-    """Example running update_csv"""
-    # pred_json = os.path.join(source_dir, date, rel_path, 'gtruth.json')
-    # csv_fname = os.path.join(source_dir, date, rel_path, 'meta.csv')
-    # print(f'Updating {date}')
-    # update_csv(csv_fname=csv_fname, pred_json=pred_json, save=True)
+    if 'summer' in spc_v:
+        root_dir = '/data6/lekevin/hab-master/hab_rnd/experiments/exp_hab20_summer2019'
+    elif '2017_2019' in spc_v:
+        root_dir = '/data6/lekevin/hab-master/hab_rnd/experiments/exp_hab20_2017_2019'
+    else:
+        root_dir = 'rawdata'
 
-    # spc_v = '-all_data'
-    # spc_v = '-20Class_17-18'
-    # rel_dir_flag = False
-    # root_dir = 'rawdata' if rel_dir_flag else '/data6/lekevin/hab-master/hab-rnd/experiments/exp_hab20_2017_2018'
-    # print('Creating density data')
-    # micro_csv = os.path.join(root_dir, "Micro{}.csv".format(spc_v))
-    # image_csv = os.path.join(root_dir, "SPC{}.csv".format(spc_v))
-    # lab_csv = None
-    # density_log = 'Density{}.log'.format(spc_v)
-    # density_fname = 'Density{}.csv'.format(spc_v)
-    # create_density_csv(output_dir=root_dir, micro_csv=micro_csv, image_csv=image_csv,
-    #                    lab_csv=lab_csv,
-    #                    log_fname=density_log,
-    #                    csv_fname=density_fname,
-    #                    gtruth_available=False)
-    csv_fname = os.path.join(ROOT_DIR, 'csv', 'invitro_summer2019.csv')
-    create_lab_csv(image_dir=LAB_IMG_DIR, csv_fname=csv_fname, save=True)
+    print('Creating density data')
+    micro_csv = os.path.join(root_dir, "Micro{}.csv".format(spc_v))
+    insitu_csv = os.path.join(root_dir, "Insitu{}.csv".format(spc_v))
+    invitro_csv = os.path.join(root_dir, "Invitro{}.csv".format(spc_v))
+    density_log = 'Density{}.log'.format(spc_v)
+    density_fname = 'Density{}.csv'.format(spc_v)
+    """don't think output_dir is necessary, just the three csv filenames + density"""
+    create_density_csv(output_dir=root_dir, micro_csv=micro_csv, insitu_csv=insitu_csv,
+                       invitro_csv=invitro_csv,
+                       log_fname=density_log,
+                       csv_fname=density_fname,
+                       gtruth_available=False)
+
+    """Uncomment to create a in vitro csv file containing all images, processed times, etc."""
+    # csv_fname = os.path.join(ROOT_DIR, 'csv', 'hab_in_vitro_summer2019.csv')
+    # create_lab_csv(image_dir=LAB_IMG_DIR, csv_fname=csv_fname, save=True)
 
 
-def create_density_csv(output_dir, micro_csv=None, image_csv=None, lab_csv=None,
+def create_density_csv(output_dir, micro_csv=None, insitu_csv=None, invitro_csv=None,
                        log_fname='density_csv.log',
                        csv_fname='Density_data.csv',
                        gtruth_available=False):
@@ -65,7 +71,7 @@ def create_density_csv(output_dir, micro_csv=None, image_csv=None, lab_csv=None,
     Args:
         output_dir (str): Absolute path to output directory
         micro_csv (str): Absolute path to microscopy csv file
-        image_csv (str): Absolute path to spc image csv file
+        insitu_csv (str): Absolute path to spc image csv file
 
     Returns:
         None
@@ -76,28 +82,41 @@ def create_density_csv(output_dir, micro_csv=None, image_csv=None, lab_csv=None,
     Logger.section_break('Create Density-CSV')
     logger = logging.getLogger('create-csv')
 
-    # Load data
     micro_data = pd.read_csv(micro_csv)
-    image_data = pd.read_csv(image_csv)
+    insitu_data = pd.read_csv(insitu_csv)
+
+    # Initialize csv parsing instance for useful item grabs
+    spc = SPCParser(csv_fname=insitu_csv, classes=CLASSES_INFO)
+    # Filter the microscopy classes based on trained HAB classes from the insitu
+    micro_data, trained_classes = spc.filter_classes(micro_data)
 
     # Filter Image_data into filtered day estimates
     time_col = 'image_timestamp'
     time_dist = '200s'
-    num_of_classes=24
 
     # Process Microscopy_data
-    micro_data = micro_data.rename(columns={'Datemm/dd/yy': time_col}, index=str)
-    #TODO include preprocessing down here for Liter --> ml
-    micro_data[time_col] = pd.to_datetime(micro_data[time_col]).dt.strftime('%Y-%m-%d')
+    micro_classes = list(micro_data.columns[3:])
+    micro_data = micro_data.rename(columns={'SampleID (YYYYMMDD)': time_col}, index=str)
+    micro_data[micro_classes] = micro_data[micro_classes].apply(lambda x: x / 1000, axis=1)
+    micro_data[time_col] = pd.to_datetime(micro_data[time_col], format='%Y%m%d').dt.strftime('%Y-%m-%d')
 
     # Process Pier Camera Data
-    time_img_data = get_time_density(image_data, time_col=time_col,
+    time_img_data = get_time_density(insitu_data, time_col=time_col,
                                      time_freq=time_dist, insitu=True,
-                                     num_of_classes=num_of_classes,
+                                     num_of_classes=len(spc.cls2idx),
                                      save_dir=output_dir)
     time_img_data[time_col] = time_img_data[time_col].astype(str)
 
+    # Filter the classes for the insitu dataset after conversion
+    clss = []
+    for i in list(trained_classes.values()):
+        clss.append('pier_{}_avg_{}'.format(i, time_dist))
+        clss.append('pier_{}_std_{}'.format(i, time_dist))
+    time_img_data = time_img_data[list(time_img_data.columns[:4]) + clss]
+
     # Merge two data types
+    bad_dates = set(micro_data['image_timestamp']).difference(time_img_data['image_timestamp'])
+    logger.debug('Dates camera under maintenance ({})\n{}\n{}'.format(len(bad_dates), '-' * 10, pformat(bad_dates)))
     density_data = micro_data.merge(time_img_data, on=time_col)
 
     # Get cell counts from Image_Data
@@ -105,23 +124,21 @@ def create_density_csv(output_dir, micro_csv=None, image_csv=None, lab_csv=None,
         time_img_data = SPCParser.get_gtruth_counts(time_img_data)
 
     # Get lab time densities
-    if lab_csv:
-        lab_data = pd.read_csv(lab_csv)
-        lab_data = lab_data.rename(columns={'timestamp': time_col}, index=str)
+    if invitro_csv:
+        lab_data = pd.read_csv(invitro_csv)
         time_dist = '200s'
-        time_lab_data = SPCParser.get_time_density(lab_data, time_col=time_col,
-                                                   time_bin=time_dist)
+        time_lab_data = get_time_density(lab_data, time_col=time_col,
+                                         time_freq=time_dist, insitu=False,
+                                         num_of_classes=len(spc.cls2idx),
+                                         save_dir=output_dir)
         time_lab_data[time_col] = time_lab_data[time_col].astype(str)
         density_data = density_data.merge(time_lab_data, on=time_col)
-
-    # Rename columns for simplicity
-    rename_dict = {'Prorocentrum micans (Cells/L)': 'micro_proro'}
-    density_data = density_data.rename(columns=rename_dict, index=str)
 
     # Save as raw data
     fname = os.path.join(output_dir, csv_fname)
     density_data.to_csv(fname, index=False)
     logger.info('CSV Completed. Saved to {}'.format(fname))
+    logger.info('Trained classes\n{}\n{}'.format('-' * 10, pformat(trained_classes)))
 
 def create_time_period_csv(output_csv, micro_csv=None, datefmt='%Y%m%d', timefmt='%H%M', offset_hours=0,
                            offset_min=0, min_camera=0.03, max_camera=0.07, camera='SPCP2'):
@@ -154,12 +171,8 @@ def create_time_period_csv(output_csv, micro_csv=None, datefmt='%Y%m%d', timefmt
     print(f'Saved file to {output_csv}')
     df.to_csv(output_csv, index=False, header=False)
 
-# data_dir = '/data6/lekevin/hab-spc/rawdata/'
-# micro_csv = os.path.join(data_dir, "Micro_data.csv")
-# output_csv = os.path.join(data_dir, 'micro_time_period.txt')
-# create_time_period_csv(output_csv=output_csv, micro_csv=micro_csv)
-
 def create_lab_csv(image_dir=None, csv_fname='', raw_color=False, save=False):
+    """Create lab csv"""
     log_fname = csv_fname.replace('.csv', '.log')
     Logger(log_fname, logging.INFO, log2file=False)
     Logger.section_break('Create LAB CSV')
@@ -192,45 +205,6 @@ def create_lab_csv(image_dir=None, csv_fname='', raw_color=False, save=False):
     lab_df.to_csv(csv_fname, index=False)
     logger.info(f'Lab dataset generation completed.\nSaved as {csv_fname}')
     logger.info('{} Bad dates to review\n{}'.format(len(bad_dates), bad_dates))
-
-def update_csv(csv_fname='meta.csv', pred_json='predictions.json', save=False):
-    """ Update the csv file with new groundtruths
-
-    Args:
-        csv_fname: Abspath to  meta csv file to merge
-        pred_json: Abspath to predictions json file to merge
-        save: Flag to save csv file
-
-    Returns:
-        merged dataframe
-
-    """
-    import os
-    import json
-    import pandas as pd
-    assert os.path.exists(csv_fname), print(csv_fname)
-    assert os.path.exists(pred_json), print(pred_json)
-
-    # Read in files and preprocess
-    label_col = 'label'
-    meta_df = pd.read_csv(csv_fname)
-    pred = json.load(open(pred_json, 'rb'))
-
-    # Drop outdated `label` column (used as gtruth in machine learning exp)
-    meta_df = meta_df.drop(columns=label_col, axis=0)
-    meta_df = meta_df.rename({'timestamp': 'image_timestamp'})
-
-    # Preprocess prediction json
-    pred_df = pd.DataFrame(pred['machine_labels'])
-    pred_df = pred_df.rename({'gtruth': label_col}, axis=1)
-
-    # Merge based off image_id
-    merged = meta_df.merge(pred_df, on='image_id')
-
-    # Overwrite previous csv file with new gtruth
-    if save:
-        merged.to_csv(csv_fname, index=False)
-    return merged
 
 if __name__ == '__main__':
     main()
