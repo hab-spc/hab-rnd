@@ -99,6 +99,26 @@ def get_time_density(data, time_col, time_freq, num_of_classes=2,
     logger.info(time_density_df.head())
     return time_density_df
 
+def get_date_dir(date):
+    logger = logging.getLogger('get_date_dir')
+    META_DATA = '{date}/001/00000_{suffix}'
+
+    def check_meta_date_exists(data_file):
+        if not os.path.exists(data_file.format('predictions.json')) or \
+                (not os.path.exists(data_file.format('features.tsv')) and not os.path.exists(data_file.format('features.csv'))):
+            return False
+        else:
+            return True
+    try:
+        for suff in ['static_html', 'processed']:
+            data_file = os.path.join(META_DATA.format(date=date, suffix=suff), '{}')
+            if check_meta_date_exists(data_file):
+                data_dir = META_DATA.format(date=date, suffix=suff)
+                return data_dir
+        logger.error(f'No existing meta data for {date}')
+    except:
+        logger.error('Error found')
+        return None
 
 def get_lab_data(date_dir=None):
     """ Get lab dataframe given a lab imaging directory date
@@ -130,15 +150,23 @@ def get_lab_data(date_dir=None):
 
     # Create image id to conduct merging
     meta_df = meta_df[meta_df.columns.values[:11]]
-    meta_df['image_id'] = meta_df['url'].apply(
-        lambda x: os.path.basename(x).replace('.jpeg', '.tif'))
+    if 'url' in meta_df.columns:
+        meta_df['image_id'] = meta_df['url'].apply(
+            lambda x: os.path.basename(x).replace('.jpeg', '.tif'))
+    else:
+        meta_df['image_id'] = meta_df['image_id'] + '.tif'
 
     # Preprocess prediction json
     pred_df = pd.DataFrame(pred['machine_labels'])
     pred_df = pred_df.rename({'gtruth': label_col}, axis=1)
+    if 'processed' in date_dir:
+        pred_df['image_id'] = pred_df['image_id'].apply(lambda x: os.path.basename(x).replace('.jpeg', '.tif'))
 
     # Merge based off image_id
     merged = meta_df.merge(pred_df, on='image_id')
+    if merged.empty:
+        logger.error('Empty dataframe')
+
     if pred_df.shape[0] != meta_df.shape[0]:
         logger.warning(
             'Inconsistency between meta and predictions {} vs {} for date {}'.format(meta_df.shape[0], pred_df.shape[0],
@@ -146,15 +174,16 @@ def get_lab_data(date_dir=None):
 
     # Extract image date and times
     # use case is more for sampling correlation plots
-    merged['image_timestamp'] = pd.to_datetime(merged['timestamp'])
-    merged['image_date'] = merged['image_timestamp'].dt.date
-    merged['image_time'] = merged['image_timestamp'].dt.time
-    merged = merged.drop(['timestamp'], axis=1)
+    if 'timestamp'  in merged.columns:
+        merged['image_timestamp'] = pd.to_datetime(merged['timestamp'])
+        merged['image_date'] = merged['image_timestamp'].dt.date
+        merged['image_time'] = merged['image_timestamp'].dt.time
+        merged = merged.drop(['timestamp'], axis=1)
 
-    # Add deployment required columns and create abspath to images
-    merged['user_labels'] = '[]'
-    merged['images'] = merged['url'].apply(lambda x: os.path.join(date_dir, 'static', x))
-    merged = merged.drop('url', axis=1)
+        # Add deployment required columns and create abspath to images
+        merged['user_labels'] = '[]'
+        merged['images'] = merged['url'].apply(lambda x: os.path.join(date_dir, 'static', x))
+        merged = merged.drop('url', axis=1)
 
     return merged
 
@@ -215,17 +244,22 @@ class SPCParser(object):
             merged.to_csv(csv_fname, index=False)
         return merged
 
-    def get_gtruth(self, gtruth_col='label', verbose=False):
+    def get_gtruth(self, gtruth_col='label', verbose=False, decode=False):
         """Get the gtruth distributions"""
         if verbose:
             print(self.dataset[gtruth_col].value_counts())
-        self.gtruth = self.dataset[gtruth_col].tolist()
+        self.gtruth = self.dataset[gtruth_col].to_dict()
+        return self.gtruth
 
-    def get_predictions(self, pred_col='pred', verbose=False):
+    def get_predictions(self, pred_col='pred', verbose=False, decode=False):
         """Get the prediction distribution"""
+        if self.idx2cls and decode:
+            self.dataset[pred_col] = self.dataset[pred_col].map(self.idx2cls)
+
         if verbose:
             print(self.dataset[pred_col].value_counts())
-        self.pred = self.dataset[pred_col].tolist()
+        self.pred = self.dataset[pred_col].value_counts().to_dict()
+        return self.pred
 
     def get_classes(self, filename):
         """Set class2idx, idx2class encoding/decoding dictionaries"""
@@ -258,6 +292,41 @@ class SPCParser(object):
             df1.rename({k: pre.format(v)}, axis=1, inplace=True)
 
         return df1, trained_classes
+
+    def get_ROI_counts(self, data, date_col='image_date', gtruth=False, pred=False, verbose=False):
+        """ Given a particular date column retrieve all ROIs within the time range
+
+        Region of Interest (RoI) is considered an image
+
+        ROI_counts['date'] = ['ROI_count', 'gtruth_dist', 'pred_dist']
+
+        Args:
+            data (pd.DataFrame): dataframe to run RoI count
+
+        Returns:
+
+        """
+        df = data.copy()
+        grouped_dates = df.groupby(date_col)
+        ROI_counts = {}
+        for idx, date_df in grouped_dates:
+            temp = {}
+            num_ROIs = date_df.shape[0]
+
+            temp['ROI_count'] = num_ROIs
+            if gtruth:
+                temp['gtruth_dist'] = df['label'].map(self.idx2cls).value_counts().to_dict()
+            if pred:
+                temp['pred_dist'] = df['pred'].map(self.idx2cls).value_counts().to_dict()
+            temp['start_time'] = date_df['start_time'].iloc[0]
+            temp['end_time'] = date_df['end_time'].iloc[0]
+            temp['min_len'] = date_df['min_len'].iloc[0]
+            temp['max_len'] = date_df['max_len'].iloc[0]
+            temp['cam'] = date_df['cam'].iloc[0]
+
+            ROI_counts[str(idx)] = temp
+
+        return ROI_counts
 
     @staticmethod
     def _parse_classes(filename):
@@ -384,3 +453,48 @@ class SPCParser(object):
             dff.to_csv(os.path.join(abs_dir, date_fname), index=False)
 
         return dff
+
+
+if __name__ == '__main__':
+    import json
+
+    time_txts = [
+        '/data6/lekevin/hab-master/spici/DB/meta/summer2019/time_period.txt',
+        # '/data6/lekevin/hab-master/hab_rnd/experiments/exp_hab20_2017_2019/time_period_2017_2019.txt'
+    ]
+    csv_fnames = [
+        # '/data6/lekevin/hab-master/hab_rnd/phytoplankton-db/csv/hab_in_vitro_summer2019-predictions.csv',
+        '/data6/lekevin/hab-master/hab_rnd/phytoplankton-db/csv/hab_in_situ_summer2019.csv',
+        # '/data6/lekevin/hab-master/hab_rnd/phytoplankton-db/csv/hab_in_situ_2017_2019-predictions.csv'
+    ]
+    classes = '/data6/lekevin/hab-master/hab_rnd/hab-ml/experiments/hab_model_v1:20191023/train_data.info'
+    target_dir = '/data6/lekevin/hab-master/hab_rnd/experiments/exp_hab20_summer2019'
+
+    roi_list = list(zip(csv_fnames, time_txts))
+    for (csv_f, time_txt) in roi_list:
+        spc = SPCParser(csv_fname=csv_f, classes=classes)
+
+        time_df = pd.read_csv(time_txt, names=['start_time', 'end_time', 'min_len', 'max_len', 'cam'])
+        time_df['start_time'] = pd.to_datetime(time_df['start_time']).dt.strftime('%m/%d/%Y %H:%M')
+        time_df['end_time'] = pd.to_datetime(time_df['end_time']).dt.strftime('%m/%d/%Y %H:%M')
+        time_df['image_date'] = pd.to_datetime(time_df['start_time']).dt.date.astype(str)
+
+        df = spc.dataset.merge(time_df)
+
+        roi_counts = spc.get_ROI_counts(data=df, pred=False)
+        print(csv_f)
+        total_rois = 0
+        for date in roi_counts:
+            t = roi_counts[date]
+            total_rois += roi_counts[date]['ROI_count']
+            print('{:10}, {:10}, {:4}, {:4}, {:5}, {:5}'.format(
+                t['start_time'], t['end_time'], t['min_len'], t['max_len'], t['cam'], t['ROI_count']))
+
+        print('Average number of images per date: {}'.format(total_rois/len(roi_counts)))
+        print('Total number of images: {}'.format(total_rois))
+        print('Total dates: {}'.format(len(roi_counts)))
+        json_fname = os.path.join(target_dir, os.path.basename(csv_f).split('-')[0]+'.json')
+        with open(json_fname, 'w', encoding='utf-8') as json_file:
+            json.dump(roi_counts, json_file, indent=4, separators=(',', ':'),
+                      sort_keys=True)
+            json_file.close()

@@ -1,2 +1,4 @@
 temp/*
 experiments/*
+.DS_Store
+.idea/*

@@ -58,9 +58,9 @@ def get_predicted_insitu_images():
         os.makedirs(image_dir)
 
     spc = SPCServer().retrieve(textfile=time_periods,
-                             output_dir=image_dir,
-                             output_csv_filename=INSITU_CSV,
-                             download=True)
+                               data_dir=image_dir,
+                               output_csv_filename=INSITU_CSV,
+                               download=True)
 
     # Deploy classifier
     opt = set_config(deploy_data=INSITU_CSV,
