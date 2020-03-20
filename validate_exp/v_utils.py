@@ -250,5 +250,12 @@ def concordance_correlation_coefficient(y_true, y_pred,
 
     return numerator / denominator
 
+# def smape(y_true, y_pred):
+#     return 100.0 / len(y_true) * np.sum(2 * np.abs(y_pred - y_true) / (np.abs(y_true)
+#                                                                        + np.abs(y_pred)))
+
 def smape(y_true, y_pred):
-    return 100 / len(y_true) * np.sum(2 * np.abs(y_pred - y_true) / (np.abs(y_true) + np.abs(y_pred)))
+    denominator = (np.abs(y_true) + np.abs(y_pred))
+    diff = np.abs(y_true - y_pred) / denominator
+    diff[denominator == 0] = 0.0
+    return 100 * np.mean(diff)
