@@ -10,9 +10,6 @@ python get_counts.py
 
 """
 # Standard dist imports
-import argparse
-from datetime import datetime
-import glob
 import logging
 import os
 import sys
@@ -33,20 +30,35 @@ from hab_ml.data.label_encoder import HABLblEncoder
 from hab_ml.utils.constants import Constants as CONST
 from hab_ml.utils.logger import Logger
 
-ROOT_DIR = '/data6/phytoplankton-db'
+GT_ROOT_DIR = '/data6/phytoplankton-db'
+MODEL_DIR = '/data6/lekevin/hab-master/hab_ml/experiments/resnet18_pretrained_c34_workshop2019_2'
+
+
 SAMPLE_METHODS_CSV = {
-	'lab': f'{ROOT_DIR}/csv/hab_in_vitro_summer2019.csv',
-	# 'micro': f'{ROOT_DIR}/csv/hab_micro_2017_2019.csv',
-    'micro': f'{ROOT_DIR}/csv/hab_micro_summer2019.csv', # Prorocentrum micans included
-    'pier': f'{ROOT_DIR}/csv/hab_in_situ_summer2019.csv',
+    # 'lab': f'{GT_ROOT_DIR}/csv/hab_in_vitro_summer2019.csv',
+    ## 'micro': f'{ROOT_DIR}/csv/hab_micro_2017_2019.csv',
+    # 'micro': f'{GT_ROOT_DIR}/csv/hab_micro_summer2019.csv', # Prorocentrum micans included
+    # 'pier': f'{GT_ROOT_DIR}/csv/hab_in_situ_summer2019.csv',
+
+    'lab': f'{MODEL_DIR}/hab_in_vitro_summer2019-predictions.csv',
+    ## 'micro': f'{ROOT_DIR}/csv/hab_micro_2017_2019.csv',
+    'micro': f'{GT_ROOT_DIR}/csv/hab_micro_summer2019.csv',
+    # Prorocentrum micans included
+    'pier': f'{MODEL_DIR}/hab_in_situ_summer2019-predictions.csv',
 }
-COUNTS_CSV = 'master_counts_{version}.csv'.format(version='v2')
-VALID_DATES = f'{ROOT_DIR}/valid_collection_dates_master.txt'
-OUTPUT_DIR = f'{ROOT_DIR}/counts'
+
+VERSION = 'v3'
+COUNTS_CSV = {
+    'plot_format': 'master_counts_{version}-plot.csv'.format(version=VERSION),
+    'master_format': 'master_counts_{version}.csv'.format(version=VERSION)}
+VALID_DATES = f'{GT_ROOT_DIR}/valid_collection_dates_master.txt'
+OUTPUT_DIR = f'{GT_ROOT_DIR}/counts'
 
 def main():
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
+    log_fname = os.path.join(OUTPUT_DIR, 'get_counts.log')
+    Logger(log_fname, logging.INFO, log2file=False)
+    Logger.section_break('Create COUNTS CSV')
+    logger = logging.getLogger('create-csv')
 
     valid_dates = open(VALID_DATES, 'r').read().splitlines()
 
@@ -67,9 +79,13 @@ def main():
         if counts_df.empty:
             counts_df = counts_df.append(smpl_counts)
         else:
-            counts_df = counts_df.merge(smpl_counts, on=['datetime', 'class'])
-            counts_df = counts_df.rename({'label_x':'label'} ,axis=1)
-            counts_df = counts_df.drop('label_y', axis=1)
+            if sample_method != 'pier':
+                counts_df = counts_df.merge(smpl_counts, on=['datetime', 'class'])
+                counts_df = counts_df.rename({'label_x': 'label'}, axis=1)
+                counts_df = counts_df.drop('label_y', axis=1)
+            else:
+                counts_df = counts_df.merge(smpl_counts, on=['datetime', 'class',
+                                                             'label'])
 
     counts_df = counts_df[counts_df['datetime'].isin(valid_dates)]
     counts_df = counts_df[['datetime', 'class', 'label',
@@ -81,10 +97,16 @@ def main():
                            'pier relative abundance'
                            ]]
 
-    csv_fname = os.path.join(OUTPUT_DIR, COUNTS_CSV)
-    logger.info(f'Concatenated counts for all sample methods saved as {csv_fname}')
+    logger.info('Counts successfully concatenated')
+    csv_fname = os.path.join(OUTPUT_DIR, COUNTS_CSV['plot_format'])
+    logger.info(f'Saving -plot version as {csv_fname}')
     counts_df.to_csv(csv_fname, index=False)
 
+    csv_fname = os.path.join(OUTPUT_DIR, COUNTS_CSV['master_format'])
+    logger.info('\nReformatting counts for error/agreement...')
+    counts_eval_df = transpose_labels(counts_df)
+    logger.info(f'Saving -master version as {csv_fname}')
+    counts_eval_df.to_csv(csv_fname, index=False)
 
 def get_counts(input_csv=None, input_dir=None, output_dir=None, sample_method='micro', eval=False):
     """ Reformat predictions into a count csv file or conduct evaluation
@@ -126,10 +148,7 @@ def get_counts(input_csv=None, input_dir=None, output_dir=None, sample_method='m
         os.mkdir(output_dir)
 
     # Initialize logging
-    log_fname = os.path.join(output_dir, '{}.log'.format(sample_method))
-    Logger(log_fname, logging.INFO, log2file=False)
-    Logger.section_break('Create LAB CSV')
-    logger = logging.getLogger('create-csv')
+    logger = logging.getLogger(__name__)
 
     # Read in data
     le = HABLblEncoder(classes_fname='/data6/lekevin/hab-master/hab_ml/experiments/resnet18_pretrained_c34_workshop2019_2/train_data.info')
@@ -144,9 +163,9 @@ def get_counts(input_csv=None, input_dir=None, output_dir=None, sample_method='m
         logger.debug(f'[date: {date}]Reformating dataframes for gtruth')
         label_df = pivot_counts_table(data=date_df, le=le, label_col=CONST.LBL)
 
-        if CONST.PRED in date_df.columns:
+        if CONST.HAB_PRED in date_df.columns:
             logger.debug(f'[date: {date}]Reformating dataframes for predictions')
-            pred_df = pivot_counts_table(data=date_df, le=le, label_col=CONST.PRED)
+            pred_df = pivot_counts_table(data=date_df, le=le, label_col=CONST.HAB_PRED)
             label_df = label_df.append(pred_df, sort=False)
 
         label_df['datetime'] = date
@@ -155,10 +174,45 @@ def get_counts(input_csv=None, input_dir=None, output_dir=None, sample_method='m
 
     col_order = list(main_df.columns)
     main_df = main_df[[col_order[-1]] + col_order[:-1]]
-    csv_fname = log_fname.replace('.log', '.csv')
+    csv_fname = os.path.join(output_dir, f'{sample_method}.csv')
     logger.info(f'Saving data as {csv_fname}')
     main_df.to_csv(csv_fname, index=False)
     return main_df
+
+
+def transpose_labels(df):
+    """loop over for each sample method (lab & pier) and concatenate it to the main_df"""
+    label = 'gtruth'
+    temp_gtruth = df[df['label'] == 'gtruth']
+    for sample_method_to_test in ['lab', 'pier']:
+        temp_gtruth = temp_gtruth.rename({
+                                             f'{sample_method_to_test} total abundance': f'{sample_method_to_test} {label} total abundance',
+                                             f'{sample_method_to_test} raw count': f'{sample_method_to_test} {label} raw count',
+                                             f'{sample_method_to_test} relative abundance': f'{sample_method_to_test} {label} relative abundance'},
+                                         axis=1)
+
+    temp_gtruth = temp_gtruth.drop('label', axis=1)
+
+    label = 'predicted'
+    temp_pred = df[df['label'] == 'prediction']
+    for sample_method_to_test in ['lab', 'pier']:
+        temp_pred = temp_pred.rename({
+                                         f'{sample_method_to_test} total abundance': f'{sample_method_to_test} {label} total abundance',
+                                         f'{sample_method_to_test} raw count': f'{sample_method_to_test} {label} raw count',
+                                         f'{sample_method_to_test} relative abundance': f'{sample_method_to_test} {label} relative abundance'},
+                                     axis=1)
+    temp_pred = temp_pred.drop('label', axis=1)
+
+    concat = temp_pred.merge(temp_gtruth, on=['class', 'datetime',
+                                              'micro raw count',
+                                              'micro relative abundance',
+                                              'micro total abundance'])
+
+    # sort dataframe
+    col = sorted(concat.columns)
+    concat = concat[[col[1]] + [col[0]] + col[8:11] + col[2:9] + col[11:]]
+
+    return concat
 
 if __name__ == '__main__':
     main()
