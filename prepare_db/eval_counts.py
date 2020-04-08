@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve()
@@ -24,94 +25,82 @@ from hab_ml.utils.logger import Logger
 COUNTS_CSV = 'master_counts_v3.csv'
 
 
-def evaluate(df, sample_method_gold_std_col, sample_method_to_test_col, classes):
-    eval_metrics = {'class': [], 'mae': [], 'mse': [], 'smape':[], 'ccc':[],
-                    'bray curtis':[], 'pearson':[], 'kl':[]}
-    epsilon = 0.00001
+def evaluate_classes(df, sample_method_gold_std_col, sample_method_to_test_col,
+                     classes, overall=False, average=False):
 
     logger.info('Classes selected: {}'.format(classes))
     df = df[df['class'].isin(classes)].reset_index(drop=True)
+
+    # dictionary for storing scores
+    eval_metrics = defaultdict(list)
+
+    # evaluate over all classes
     for cls in classes:
-        # get data
+        # get class data and assign count data
         temp = df.loc[df['class'] == cls]
-        smpl_gold_std, smpl_to_test = temp[sample_method_gold_std_col], temp[sample_method_to_test_col]
+        cls_smpl_gold_std, cls_smpl_to_test = temp[sample_method_gold_std_col], temp[
+            sample_method_to_test_col]
 
-
+        # run through all evaluation functions
+        eval_metrics = evaluate(eval_metrics, y_true=cls_smpl_gold_std,
+                                y_pred=cls_smpl_to_test)
         eval_metrics['class'].append(cls)
-        # MAE
-        eval_metrics['mae'].append(mean_absolute_error(smpl_gold_std, smpl_to_test))
-        # MSE
-        eval_metrics['mse'].append(mean_squared_error(smpl_gold_std, smpl_to_test))
-        # smape
-        eval_metrics['smape'].append(smape(smpl_gold_std, smpl_to_test))
-        # CCC
-        eval_metrics['ccc'].append(concordance_correlation_coefficient(smpl_gold_std, smpl_to_test))
-        # bray curtis
-        eval_metrics['bray curtis'].append(distance.braycurtis(smpl_gold_std, smpl_to_test))
-        # Pearson correlation coefficient
-        eval_metrics['pearson'].append(stats.pearsonr(smpl_gold_std, smpl_to_test)[0])
-        # KL Divergence
-        smpl_gold_std = smpl_gold_std.apply(lambda x: epsilon if x == 0 else x)
-        smpl_to_test = smpl_to_test.apply(lambda x: epsilon if x == 0 else x)
 
-        # smpl_gold_std = smpl_gold_std[smpl_gold_std != 0]
-        # smpl_to_test = smpl_to_test[smpl_to_test != 0]
+    if average:
+        eval_metrics['class'].append('average')
+        for metric in eval_metrics:
+            if metric == 'class':
+                continue
+            eval_metrics[metric].append(np.mean(eval_metrics[metric]))
 
-        # smpl_gold_std = smpl_gold_std / np.sum(smpl_gold_std)
-        # smpl_to_test = smpl_to_test / np.sum(smpl_to_test)
+    if overall:
+        eval_metrics['class'].append('overall')
+        overall_y_true, overall_y_pred = df[sample_method_gold_std_col], df[
+            sample_method_to_test_col]
+        eval_metrics = evaluate(eval_metrics, y_true=overall_y_true,
+                                y_pred=overall_y_pred)
 
-        eval_metrics['kl'].append(kl_divergence(smpl_gold_std, smpl_to_test))
+    return eval_metrics
 
-    print(
-        'Standard deviation (smape per class): {}'.format(np.std(eval_metrics['smape'])))
 
-    eval_metrics['class'].append('average')
-    eval_metrics['mae'].append(np.mean(eval_metrics['mae']))
-    eval_metrics['mse'].append(np.mean(eval_metrics['mse']))
-    eval_metrics['smape'].append(np.mean(eval_metrics['smape']))
-    eval_metrics['ccc'].append(np.mean(eval_metrics['ccc']))
-    eval_metrics['bray curtis'].append(np.mean(eval_metrics['bray curtis']))
-    eval_metrics['pearson'].append(np.mean(eval_metrics['pearson']))
-    eval_metrics['kl'].append(np.mean(eval_metrics['kl']))
+def get_eval_fn():
+    metrics = {
+        'mae': mean_absolute_error,
+        'mse': mean_squared_error,
+        'smape': smape,
+        'ccc': concordance_correlation_coefficient,
+        'bray curtis': distance.braycurtis,
+        'pearson': stats.pearsonr,
+        'kl': kl_divergence,
+    }
+    return metrics
 
-    eval_metrics['class'].append('overall')
-    eval_metrics['mae'].append(mean_absolute_error(df[sample_method_gold_std_col],
-                                                   df[sample_method_to_test_col]))
-    eval_metrics['mse'].append(mean_squared_error(df[sample_method_gold_std_col],
-                                                  df[sample_method_to_test_col]))
 
-    std = np.std(np.abs(df[sample_method_gold_std_col] - df[sample_method_to_test_col]))
-    print('Standard deviation (abs diff): {}'.format(std))
+def evaluate(eval_metrics, y_true, y_pred):
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    # get evaluation functions
+    eval_fns = get_eval_fn()
 
-    eval_metrics['smape'].append(smape(df[sample_method_gold_std_col],
-                                       df[sample_method_to_test_col]))
-    eval_metrics['ccc'].append(
-        concordance_correlation_coefficient(df[sample_method_gold_std_col],
-                                            df[sample_method_to_test_col]))
-    eval_metrics['bray curtis'].append(
-        distance.braycurtis(df[sample_method_gold_std_col],
-                            df[sample_method_to_test_col]))
-    eval_metrics['pearson'].append(stats.pearsonr(df[sample_method_gold_std_col],
-                                                  df[sample_method_to_test_col])[0])
-
-    eval_metrics['kl'].append(
-        kl_divergence(df[sample_method_gold_std_col], df[sample_method_to_test_col]))
-
+    # run through all evaluation functions
+    for metric, eval_fn in eval_fns.items():
+        # evaluate and save score
+        score = eval_fn(y_true, y_pred)
+        if not isinstance(score, float):
+            score = score[0]
+        logger.debug('{:15} {}'.format(metric, score))
+        eval_metrics[metric].append(score)
     return eval_metrics
 
 
 def evaluate_counts(input_dir, sample_method_gold_std, sample_method_to_test,
                     classes, count='raw count'):
     # Initialize logging
-    suffix = f'{sample_method_gold_std}-{sample_method_to_test}'
+    suffix = f'{sample_method_gold_std.replace(" ", "-")}-{sample_method_to_test.replace(" ", "-")}'
     logger = logging.getLogger(__name__)
 
-    label_type = 'gtruth'
     sample_method_gold_std_col = f'{sample_method_gold_std} {count}'
-    sample_method_to_test_col = f'{sample_method_to_test} {label_type} {count}'
-
-    if sample_method_gold_std == 'lab':
-        sample_method_gold_std_col = f'{sample_method_gold_std} {label_type} {count}'
+    sample_method_to_test_col = f'{sample_method_to_test} {count}'
 
     data = pd.read_csv(os.path.join(input_dir, COUNTS_CSV))
     df = data.copy()
@@ -124,8 +113,9 @@ def evaluate_counts(input_dir, sample_method_gold_std, sample_method_to_test,
     # transform dataset
 
     # evaluation
-    eval_metrics = evaluate(df, sample_method_gold_std_col, sample_method_to_test_col,
-                            classes)
+    eval_metrics = evaluate_classes(df, sample_method_gold_std_col,
+                                    sample_method_to_test_col,
+                                    classes, overall=True, average=True)
 
     # Create dataframe and save to csv
     eval_df = pd.DataFrame(eval_metrics)
@@ -154,27 +144,11 @@ if __name__ == '__main__':
     classes = ['Akashiwo', 'Ceratium falcatiforme or fusus', 'Ceratium furca',
                'Chattonella', 'Cochlodinium', 'Gyrodinium', 'Lingulodinium polyedra',
                'Prorocentrum micans', 'Pseudo-nitzschia chain']
+
     # import random
     # for smpl in range(1, len(classes) + 1):
     #     print('{}:{},'.format(smpl, random.sample(classes, smpl)))
     RANDOM_SMPLED_CLSSES = {
-        1: ['Pseudo-nitzschia chain'],
-        2: ['Pseudo-nitzschia chain', 'Prorocentrum micans'],
-        3: ['Akashiwo', 'Ceratium furca', 'Prorocentrum micans'],
-        4: ['Chattonella', 'Gyrodinium', 'Ceratium falcatiforme or fusus',
-            'Ceratium furca'],
-        5: ['Ceratium falcatiforme or fusus', 'Akashiwo', 'Lingulodinium polyedra',
-            'Ceratium furca', 'Prorocentrum micans'],
-        6: ['Ceratium falcatiforme or fusus', 'Ceratium furca', 'Cochlodinium',
-            'Pseudo-nitzschia chain', 'Chattonella', 'Lingulodinium polyedra'],
-        7: ['Akashiwo', 'Prorocentrum micans', 'Lingulodinium polyedra',
-            'Pseudo-nitzschia chain', 'Chattonella', 'Gyrodinium', 'Cochlodinium'],
-        8: ['Akashiwo', 'Chattonella', 'Cochlodinium', 'Gyrodinium',
-            'Lingulodinium polyedra', 'Pseudo-nitzschia chain', 'Prorocentrum micans',
-            'Ceratium furca'],
-        9: ['Ceratium furca', 'Pseudo-nitzschia chain', 'Gyrodinium',
-            'Ceratium falcatiforme or fusus', 'Prorocentrum micans', 'Akashiwo',
-            'Cochlodinium', 'Lingulodinium polyedra', 'Chattonella'],
     }
 
     input_dir = '/data6/phytoplankton-db/counts/'
@@ -187,62 +161,22 @@ if __name__ == '__main__':
     COUNT = 'raw count'
     logger.info('Count form: {}'.format(COUNT))
 
-    if SMAPE_VS_CLASS_EXP:
-        micro_lab_scores = []
-        micro_pier_scores = []
-        lab_pier_scores = []
+    MICRO = 'micro'
+    LAB_GT = 'lab gtruth'
+    LAB_PRED = 'lab predicted'
+    PIER_GT = 'pier gtruth'
+    PIER_PRED = 'pier predicted'
 
-        ml_kl_scores, mp_kl_scores, lp_kl_scores = [], [], []
+    settings = [(MICRO, LAB_GT),
+                (MICRO, LAB_PRED),
+                (MICRO, PIER_GT),
+                (MICRO, PIER_PRED),
+                (LAB_GT, LAB_PRED),
+                (PIER_GT, PIER_PRED)]
 
-        for idx, clses in RANDOM_SMPLED_CLSSES.items():
-            logger.info('Total classes:{}'.format(idx))
-
-            Logger.section_break('micro vs lab')
-            ml_smape, ml_kl = evaluate_counts(input_dir,
-                                              sample_method_gold_std='micro',
-                                              sample_method_to_test='lab', classes=clses)
-            micro_lab_scores.append(ml_smape)
-            ml_kl_scores.append(ml_kl)
-
-            Logger.section_break('micro vs pier')
-            mp_smape, mp_kl = evaluate_counts(input_dir,
-                                              sample_method_gold_std='micro',
-                                              sample_method_to_test='pier',
-                                              classes=clses)
-            micro_pier_scores.append(mp_smape)
-            mp_kl_scores.append(mp_kl)
-
-            Logger.section_break('lab vs pier')
-            lp_smape, lp_kl = evaluate_counts(input_dir,
-                                              sample_method_gold_std='lab',
-                                              sample_method_to_test='pier',
-                                              classes=clses)
-            lab_pier_scores.append(lp_smape)
-            lp_kl_scores.append(lp_kl)
-
-        logger.info(micro_lab_scores)
-        logger.info(micro_pier_scores)
-        logger.info(lab_pier_scores)
-
-        logger.info(ml_kl_scores)
-        logger.info(mp_kl_scores)
-        logger.info(lp_kl_scores)
-
-    else:
-        Logger.section_break('micro vs lab')
-        ml_smape = evaluate_counts(input_dir,
-                                   sample_method_gold_std='micro',
-                                   sample_method_to_test='lab', classes=classes,
-                                   count=COUNT)
-
-        Logger.section_break('micro vs pier')
-        mp_smape = evaluate_counts(input_dir,
-                                   sample_method_gold_std='micro',
-                                   sample_method_to_test='pier', classes=classes,
-                                   count=COUNT)
-
-        Logger.section_break('lab vs pier')
-        lp_smape = evaluate_counts(input_dir,
-                                   sample_method_gold_std='lab',
-                                   sample_method_to_test='pier', classes=classes,
-                                   count=COUNT)
+    for (smpl_gold, smpl_test) in settings:
+        Logger.section_break(f'{smpl_gold} vs {smpl_test}')
+        evaluate_counts(input_dir,
+                        sample_method_gold_std=smpl_gold,
+                        sample_method_to_test=smpl_test, classes=classes,
+                        count=COUNT)

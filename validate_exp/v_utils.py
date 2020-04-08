@@ -9,7 +9,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from matplotlib.colors import BoundaryNorm
-
+from scipy.stats import entropy
 
 def load_density_data(csv_fname, verbose=False):
     """Load the density csv data and apply transformation"""
@@ -250,8 +250,23 @@ def concordance_correlation_coefficient(y_true, y_pred,
 
     return numerator / denominator
 
+
+def kl_divergence(p, q):
+    eps = 0.01
+    pp = p + eps
+    pp /= sum(pp)
+
+    qq = q + eps
+    qq /= sum(qq)
+    kl_div = entropy(pp, qq, base=10.)
+    return kl_div
+
+
+# def kl_divergence(p, q):
+# return np.sum(np.where(p != 0, p * np.log(p / q), 0))
+
 # def smape(y_true, y_pred):
-#     return 100.0 / len(y_true) * np.sum(2 * np.abs(y_pred - y_true) / (np.abs(y_true)
+#     return 100.0 / len(y_true) * np.sum(np.abs(y_pred - y_true) / (np.abs(y_true)
 #                                                                        + np.abs(y_pred)))
 
 def smape(y_true, y_pred):
