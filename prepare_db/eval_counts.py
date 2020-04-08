@@ -25,76 +25,18 @@ from hab_ml.utils.logger import Logger
 COUNTS_CSV = 'master_counts_v3.csv'
 
 
-def evaluate_classes(df, sample_method_gold_std_col, sample_method_to_test_col,
-                     classes, overall=False, average=False):
-
-    logger.info('Classes selected: {}'.format(classes))
-    df = df[df['class'].isin(classes)].reset_index(drop=True)
-
-    # dictionary for storing scores
-    eval_metrics = defaultdict(list)
-
-    # evaluate over all classes
-    for cls in classes:
-        # get class data and assign count data
-        temp = df.loc[df['class'] == cls]
-        cls_smpl_gold_std, cls_smpl_to_test = temp[sample_method_gold_std_col], temp[
-            sample_method_to_test_col]
-
-        # run through all evaluation functions
-        eval_metrics = evaluate(eval_metrics, y_true=cls_smpl_gold_std,
-                                y_pred=cls_smpl_to_test)
-        eval_metrics['class'].append(cls)
-
-    if average:
-        eval_metrics['class'].append('average')
-        for metric in eval_metrics:
-            if metric == 'class':
-                continue
-            eval_metrics[metric].append(np.mean(eval_metrics[metric]))
-
-    if overall:
-        eval_metrics['class'].append('overall')
-        overall_y_true, overall_y_pred = df[sample_method_gold_std_col], df[
-            sample_method_to_test_col]
-        eval_metrics = evaluate(eval_metrics, y_true=overall_y_true,
-                                y_pred=overall_y_pred)
-
-    return eval_metrics
-
-
-def get_eval_fn():
-    metrics = {
-        'mae': mean_absolute_error,
-        'mse': mean_squared_error,
-        'smape': smape,
-        'ccc': concordance_correlation_coefficient,
-        'bray curtis': distance.braycurtis,
-        'pearson': stats.pearsonr,
-        'kl': kl_divergence,
-    }
-    return metrics
-
-
-def evaluate(eval_metrics, y_true, y_pred):
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    # get evaluation functions
-    eval_fns = get_eval_fn()
-
-    # run through all evaluation functions
-    for metric, eval_fn in eval_fns.items():
-        # evaluate and save score
-        score = eval_fn(y_true, y_pred)
-        if not isinstance(score, float):
-            score = score[0]
-        logger.debug('{:15} {}'.format(metric, score))
-        eval_metrics[metric].append(score)
-    return eval_metrics
-
-
 def evaluate_counts(input_dir, sample_method_gold_std, sample_method_to_test,
                     classes, count='raw count'):
+    """ Evaluates a setting and save it for plotting
+
+    Args:
+        input_dir (str): Parent directory to read counts from
+        sample_method_gold_std (str): Gold standard column name
+        sample_method_to_test (str): Tested column name
+        classes (list): Classes
+        count (str): Count type (raw count, relative abundance, etc.)
+
+    """
     # Initialize logging
     suffix = f'{sample_method_gold_std.replace(" ", "-")}-{sample_method_to_test.replace(" ", "-")}'
     logger = logging.getLogger(__name__)
@@ -102,6 +44,7 @@ def evaluate_counts(input_dir, sample_method_gold_std, sample_method_to_test,
     sample_method_gold_std_col = f'{sample_method_gold_std} {count}'
     sample_method_to_test_col = f'{sample_method_to_test} {count}'
 
+    # Load dataset
     data = pd.read_csv(os.path.join(input_dir, COUNTS_CSV))
     df = data.copy()
     df = df.dropna()
@@ -139,11 +82,109 @@ def evaluate_counts(input_dir, sample_method_gold_std, sample_method_to_test,
 
     return results['smape'], results['kl']
 
+def evaluate_classes(df, sample_method_gold_std_col, sample_method_to_test_col,
+                     classes, overall=False, average=False):
+    """ Evaluate over all classes
+
+    Args:
+        df: Dataset
+        sample_method_gold_std_col (str): Column name to compare against (gtruth)
+        sample_method_to_test_col (str): Column name to test
+        classes(list): Classes to evaluate
+        overall (bool):  Flag to compute aggregated score. Default False
+        average (bool): Flag to compute average of all class scores. Default False
+
+    Returns:
+        dict: Evaluation metrics
+
+    """
+
+    logger.info('Classes selected: {}'.format(classes))
+    df = df[df['class'].isin(classes)].reset_index(drop=True)
+
+    # dictionary for storing scores
+    eval_metrics = defaultdict(list)
+
+    # evaluate over all classes
+    for cls in classes:
+        # get class data and assign count data
+        temp = df.loc[df['class'] == cls]
+        cls_smpl_gold_std, cls_smpl_to_test = temp[sample_method_gold_std_col], temp[
+            sample_method_to_test_col]
+
+        # run through all evaluation functions
+        eval_metrics = evaluate(eval_metrics, y_true=cls_smpl_gold_std,
+                                y_pred=cls_smpl_to_test)
+        eval_metrics['class'].append(cls)
+
+    if average:
+        eval_metrics['class'].append('average')
+        for metric in eval_metrics:
+            if metric == 'class':
+                continue
+            eval_metrics[metric].append(np.mean(eval_metrics[metric]))
+
+    if overall:
+        eval_metrics['class'].append('overall')
+        overall_y_true, overall_y_pred = df[sample_method_gold_std_col], df[
+            sample_method_to_test_col]
+        eval_metrics = evaluate(eval_metrics, y_true=overall_y_true,
+                                y_pred=overall_y_pred)
+
+    return eval_metrics
+
+
+def get_eval_fn():
+    """ Returns consolidated dictionary of evaluation functions to run
+
+    Returns:
+        dict: Evaluation metrics
+    """
+    metrics = {
+        'mae': mean_absolute_error,
+        'mse': mean_squared_error,
+        'smape': smape,
+        'ccc': concordance_correlation_coefficient,
+        'bray curtis': distance.braycurtis,
+        'pearson': stats.pearsonr,
+        'kl': kl_divergence,
+    }
+    return metrics
+
+
+def evaluate(eval_metrics, y_true, y_pred):
+    """ Evaluates count data and returns dictionary of scores
+
+    Args:
+        eval_metrics (dict): Dictionary to store scores
+        y_true (list): Gtruth data points
+        y_pred (list): Predicted data points
+
+    Returns:
+        dict: scores
+
+    """
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+
+    # get evaluation functions
+    eval_fns = get_eval_fn()
+
+    # run through all evaluation functions
+    for metric, eval_fn in eval_fns.items():
+        # evaluate and save score
+        score = eval_fn(y_true, y_pred)
+        if not isinstance(score, float):
+            score = score[0]
+        logger.debug('{:15} {}'.format(metric, score))
+        eval_metrics[metric].append(score)
+    return eval_metrics
+
 if __name__ == '__main__':
 
     classes = ['Akashiwo', 'Ceratium falcatiforme or fusus', 'Ceratium furca',
-               'Chattonella', 'Cochlodinium', 'Gyrodinium', 'Lingulodinium polyedra',
-               'Prorocentrum micans', 'Pseudo-nitzschia chain']
+               'Cochlodinium', 'Lingulodinium polyedra',
+               'Prorocentrum micans']
 
     # import random
     # for smpl in range(1, len(classes) + 1):
@@ -167,12 +208,15 @@ if __name__ == '__main__':
     PIER_GT = 'pier gtruth'
     PIER_PRED = 'pier predicted'
 
-    settings = [(MICRO, LAB_GT),
-                (MICRO, LAB_PRED),
-                (MICRO, PIER_GT),
-                (MICRO, PIER_PRED),
-                (LAB_GT, LAB_PRED),
-                (PIER_GT, PIER_PRED)]
+    settings = [
+        (MICRO, LAB_GT),
+        # (MICRO, LAB_PRED),
+        (MICRO, PIER_GT),
+        # (MICRO, PIER_PRED),
+        (LAB_GT, PIER_GT),
+        # (LAB_GT, LAB_PRED),
+        # (PIER_GT, PIER_PRED)
+    ]
 
     for (smpl_gold, smpl_test) in settings:
         Logger.section_break(f'{smpl_gold} vs {smpl_test}')
