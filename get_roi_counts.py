@@ -1,13 +1,10 @@
+import os
+
+# Third party imports
+import pandas as pd
+
 from prepare_db.create_csv import create_time_period_csv
 from prepare_db.parse_csv import SPCParser
-import glob
-import logging
-import os
-import re
-import sys
-# Third party imports
-import numpy as np
-import pandas as pd
 
 """UPDATE on local raw_data/hab_in_situ_summer19_times.csv then copy it to the 
 parent directory of the micro csv"""
@@ -43,3 +40,10 @@ data = spc.get_ROI_counts(temp)
 for k,v in data.items():
     print(f'{v["start_time"]},{v["end_time"]},{v["ROI_count"]}')
 
+for k, v in ROI_counts.items():
+    print('\n{0:*^80}'.format(' {} ({}) '.format(k, v["ROI_count"])))
+    print(f'Date: {k}')
+    print(f'Total ROIs: {v["ROI_count"]}')
+    print(f'HAB Species Distribution\n{"-" * 30}')
+    for cls, count in v["gtruth_dist"].items():
+        print('{:50} {:5}'.format(cls, count))
