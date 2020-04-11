@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import sys
@@ -6,7 +7,6 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve()
 sys.path.insert(0, PROJECT_DIR.parents[0])
-sys.path.insert(0, str(PROJECT_DIR.parents[1]) + '/hab_ml')
 sys.path.insert(0, PROJECT_DIR.parents[1])
 sys.path.insert(0, PROJECT_DIR.parents[2])
 
@@ -14,16 +14,72 @@ sys.path.insert(0, PROJECT_DIR.parents[2])
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from validate_exp.v_utils import concordance_correlation_coefficient, smape, \
-    kl_divergence, set_counts
 from scipy.spatial import distance
 from scipy import stats
 
 # Project level imports
+from validate_exp.v_utils import concordance_correlation_coefficient, smape, \
+    kl_divergence, set_counts
 from hab_ml.utils.logger import Logger
 
 COUNTS_CSV = 'master_counts_v4.csv'
 
+
+def main(args):
+    # Excluded 3 classes atm
+    classes = ['Akashiwo', 'Ceratium falcatiforme or fusus', 'Ceratium furca',
+               'Cochlodinium', 'Lingulodinium polyedra', 'Prorocentrum micans']
+
+    # Initialize logging
+    input_dir = args.input_dir
+    log_fname = os.path.join(input_dir, 'eval_counts.log')
+    Logger(log_fname, logging.INFO, log2file=False)
+    Logger.section_break('Create EVAL CSV')
+    logger = logging.getLogger('create-csv')
+
+    COUNT = 'cells/mL'
+    logger.info('Count form: {}'.format(COUNT))
+
+    # Set count forms
+    MICRO_ML, LAB_ML, PIER_ML = set_counts('gtruth', 'cells/mL')
+    _, LAB_P_ML, PIER_P_ML = set_counts('predicted', 'cells/mL')
+    MICRO_RC, LAB_RC, PIER_RC = set_counts('gtruth', 'raw count')
+    MICRO, LAB_P_RC, PIER_P_RC = set_counts('predicted', 'raw count')
+    _, LAB_NRC, PIER_NRC = set_counts('gtruth', 'nrmlzd raw count')
+    _, LAB_P_NRC, PIER_P_NRC = set_counts('predicted', 'nrmlzd raw count')
+
+    # Set count form comparisons for evaluation
+    settings = [
+        (MICRO_ML, LAB_ML),
+        (MICRO_ML, PIER_ML),
+        (LAB_ML, PIER_ML),
+
+        (MICRO_ML, LAB_RC),
+        (MICRO_ML, PIER_RC),
+        (LAB_RC, PIER_RC),
+
+        (MICRO_ML, LAB_NRC),
+        (MICRO_ML, PIER_NRC),
+        (LAB_NRC, PIER_NRC),
+
+        (MICRO_RC, LAB_RC),
+        # (MICRO_RC, LAB_P_RC),
+        (MICRO_RC, PIER_RC),
+        # (MICRO_RC, PIER_P_RC),
+        (LAB_RC, PIER_RC),
+        # (LAB_RC, LAB_P_RC),
+        # (PIER_RC, PIER_P_RC)
+    ]
+
+    # Evalute counts
+    scores = {}
+    for (smpl_gold, smpl_test) in settings:
+        Logger.section_break(f'{smpl_gold} vs {smpl_test}')
+        scores[(smpl_gold, smpl_test)] = evaluate_counts(input_dir,
+                                                         gtruth_smpl_mthd=smpl_gold,
+                                                         exp_smpl_mthd=smpl_test,
+                                                         classes=classes)
+    print_eval(scores)
 
 def evaluate_counts(input_dir, gtruth_smpl_mthd, exp_smpl_mthd, classes):
     """ Evaluates a setting and save it for plotting
@@ -95,7 +151,7 @@ def evaluate_classes(df, sample_method_gold_std_col, sample_method_to_test_col,
         dict: Evaluation metrics
 
     """
-
+    logger = logging.getLogger(__name__)
     logger.info('Classes selected: {}'.format(classes))
     df = df[df['class'].isin(classes)].reset_index(drop=True)
 
@@ -190,60 +246,9 @@ def print_eval(scores):
 
 
 if __name__ == '__main__':
-
-    classes = ['Akashiwo', 'Ceratium falcatiforme or fusus', 'Ceratium furca',
-               'Cochlodinium', 'Lingulodinium polyedra', 'Prorocentrum micans']
-
-    # import random
-    # for smpl in range(1, len(classes) + 1):
-    #     print('{}:{},'.format(smpl, random.sample(classes, smpl)))
-    RANDOM_SMPLED_CLSSES = {
-    }
-
-    input_dir = '/data6/phytoplankton-db/counts/'
-    log_fname = os.path.join(input_dir, 'eval_counts.log')
-    Logger(log_fname, logging.INFO, log2file=False)
-    Logger.section_break('Create EVAL CSV')
-    logger = logging.getLogger('create-csv')
-
-    SMAPE_VS_CLASS_EXP = False
-    COUNT = 'cells/mL'
-    logger.info('Count form: {}'.format(COUNT))
-
-    MICRO_ML, LAB_ML, PIER_ML = set_counts('gtruth', 'cells/mL')
-    _, LAB_P_ML, PIER_P_ML = set_counts('predicted', 'cells/mL')
-    MICRO_RC, LAB_RC, PIER_RC = set_counts('gtruth', 'raw count')
-    MICRO, LAB_P_RC, PIER_P_RC = set_counts('predicted', 'raw count')
-    _, LAB_NRC, PIER_NRC = set_counts('gtruth', 'nrmlzd raw count')
-    _, LAB_P_NRC, PIER_P_NRC = set_counts('predicted', 'nrmlzd raw count')
-
-    settings = [
-        (MICRO_ML, LAB_ML),
-        (MICRO_ML, PIER_ML),
-        (LAB_ML, PIER_ML),
-
-        (MICRO_ML, LAB_RC),
-        (MICRO_ML, PIER_RC),
-        (LAB_RC, PIER_RC),
-
-        (MICRO_ML, LAB_NRC),
-        (MICRO_ML, PIER_NRC),
-        (LAB_NRC, PIER_NRC),
-
-        (MICRO_RC, LAB_RC),
-        # (MICRO_RC, LAB_P_RC),
-        (MICRO_RC, PIER_RC),
-        # (MICRO_RC, PIER_P_RC),
-        (LAB_RC, PIER_RC),
-        # (LAB_RC, LAB_P_RC),
-        # (PIER_RC, PIER_P_RC)
-    ]
-
-    scores = {}
-    for (smpl_gold, smpl_test) in settings:
-        Logger.section_break(f'{smpl_gold} vs {smpl_test}')
-        scores[(smpl_gold, smpl_test)] = evaluate_counts(input_dir,
-                                                         gtruth_smpl_mthd=smpl_gold,
-                                                         exp_smpl_mthd=smpl_test,
-                                                         classes=classes)
-    print_eval(scores)
+    parser = argparse.ArgumentParser(description='Evaluate Counts')
+    parser.add_argument('--input_dir', type=str,
+                        default='/data6/phytoplankton-db/counts/',
+                        help='Count data directory to evaluate counts from')
+    args = parser.parse_args()
+    main(args)

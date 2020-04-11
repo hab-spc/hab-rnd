@@ -10,13 +10,13 @@ python get_counts.py
 
 """
 # Standard dist imports
+import argparse
 import logging
 import os
 import sys
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve()
-print(str(PROJECT_DIR.parents[1]))
 sys.path.insert(0, PROJECT_DIR.parents[0])
 sys.path.insert(0, str(PROJECT_DIR.parents[1]) + '/hab_ml')
 sys.path.insert(0, PROJECT_DIR.parents[1])
@@ -26,14 +26,17 @@ sys.path.insert(0, PROJECT_DIR.parents[2])
 import pandas as pd
 
 # Project level imports
-from hab_ml.data.label_encoder import HABLblEncoder
-from hab_ml.utils.constants import Constants as CONST
-from hab_ml.utils.logger import Logger
+from data.label_encoder import HABLblEncoder
+from utils.constants import Constants as CONST
+from utils.logger import Logger
+
 
 GT_ROOT_DIR = '/data6/phytoplankton-db'
+# To update the model, change this directory
 MODEL_DIR = '/data6/lekevin/hab-master/hab_ml/experiments/resnet18_pretrained_c34_workshop2019_2'
 
-
+## INPUT FILES
+VALID_DATES = f'{GT_ROOT_DIR}/valid_collection_dates_master.txt'
 SAMPLE_METHODS_CSV = {
     # 'lab': f'{GT_ROOT_DIR}/csv/hab_in_vitro_summer2019.csv',
     ## 'micro': f'{ROOT_DIR}/csv/hab_micro_2017_2019.csv',
@@ -47,19 +50,22 @@ SAMPLE_METHODS_CSV = {
     'pier': f'{MODEL_DIR}/hab_in_situ_summer2019-predictions.csv',
 }
 
+## OUTPUT FILES
 VERSION = 'v4'
 COUNTS_CSV = {
     'plot_format': 'master_counts_{version}-plot.csv'.format(version=VERSION),
     'master_format': 'master_counts_{version}.csv'.format(version=VERSION)}
-VALID_DATES = f'{GT_ROOT_DIR}/valid_collection_dates_master.txt'
-OUTPUT_DIR = f'{GT_ROOT_DIR}/counts'
 
-def main():
-    log_fname = os.path.join(OUTPUT_DIR, 'get_counts.log')
+
+def main(args):
+    output_dir = args.output_dir
+
+    log_fname = os.path.join(output_dir, 'get_counts.log')
     Logger(log_fname, logging.INFO, log2file=False)
     Logger.section_break('Create COUNTS CSV')
     logger = logging.getLogger('create-csv')
 
+    # Read valid dates file
     valid_dates = open(VALID_DATES, 'r').read().splitlines()
 
     counts_df = pd.DataFrame()
@@ -71,8 +77,8 @@ def main():
 
         if sample_method != 'micro':
             smpl_counts = get_counts(input_csv=input_csv,
-                                 output_dir=OUTPUT_DIR,
-                                 sample_method=sample_method)
+                                     output_dir=output_dir,
+                                     sample_method=sample_method)
         else:
             smpl_counts = pd.read_csv(input_csv)
 
@@ -101,11 +107,11 @@ def main():
                            ]]
 
     logger.info('Counts successfully concatenated')
-    csv_fname = os.path.join(OUTPUT_DIR, COUNTS_CSV['plot_format'])
+    csv_fname = os.path.join(output_dir, COUNTS_CSV['plot_format'])
     logger.info(f'Saving -plot version as {csv_fname}')
     counts_df.to_csv(csv_fname, index=False)
 
-    csv_fname = os.path.join(OUTPUT_DIR, COUNTS_CSV['master_format'])
+    csv_fname = os.path.join(output_dir, COUNTS_CSV['master_format'])
     logger.info('\nReformatting counts for error/agreement...')
     counts_eval_df = transpose_labels(counts_df)
     logger.info(f'Saving -master version as {csv_fname}')
@@ -249,4 +255,9 @@ def normalize_raw_count(data, sample_method):
     return data
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='Get counts dataset')
+    parser.add_argument('--output_dir', type=str,
+                        default=f'{GT_ROOT_DIR}/counts',
+                        help='Output directory to save counts data')
+    args = parser.parse_args()
+    main(args)
