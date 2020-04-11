@@ -15,18 +15,17 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from validate_exp.v_utils import concordance_correlation_coefficient, smape, \
-    kl_divergence
+    kl_divergence, set_counts
 from scipy.spatial import distance
 from scipy import stats
 
 # Project level imports
 from hab_ml.utils.logger import Logger
 
-COUNTS_CSV = 'master_counts_v3.csv'
+COUNTS_CSV = 'master_counts_v4.csv'
 
 
-def evaluate_counts(input_dir, sample_method_gold_std, sample_method_to_test,
-                    classes, count='raw count'):
+def evaluate_counts(input_dir, gtruth_smpl_mthd, exp_smpl_mthd, classes):
     """ Evaluates a setting and save it for plotting
 
     Args:
@@ -34,15 +33,13 @@ def evaluate_counts(input_dir, sample_method_gold_std, sample_method_to_test,
         sample_method_gold_std (str): Gold standard column name
         sample_method_to_test (str): Tested column name
         classes (list): Classes
-        count (str): Count type (raw count, relative abundance, etc.)
 
     """
     # Initialize logging
-    suffix = f'{sample_method_gold_std.replace(" ", "-")}-{sample_method_to_test.replace(" ", "-")}'
+    suffix = f'{gtruth_smpl_mthd.replace(" ", "-")}_{exp_smpl_mthd.replace(" ", "-")}'
+    if 'cells/mL' in suffix:
+        suffix = suffix.replace('-cells/mL', '-cells')
     logger = logging.getLogger(__name__)
-
-    sample_method_gold_std_col = f'{sample_method_gold_std} {count}'
-    sample_method_to_test_col = f'{sample_method_to_test} {count}'
 
     # Load dataset
     data = pd.read_csv(os.path.join(input_dir, COUNTS_CSV))
@@ -56,8 +53,8 @@ def evaluate_counts(input_dir, sample_method_gold_std, sample_method_to_test,
     # transform dataset
 
     # evaluation
-    eval_metrics = evaluate_classes(df, sample_method_gold_std_col,
-                                    sample_method_to_test_col,
+    eval_metrics = evaluate_classes(df, gtruth_smpl_mthd,
+                                    exp_smpl_mthd,
                                     classes, overall=True, average=True)
 
     # Create dataframe and save to csv
@@ -70,10 +67,10 @@ def evaluate_counts(input_dir, sample_method_gold_std, sample_method_to_test,
             continue
         logger.info(f'{metric}: {score:.02f}')
 
-    logger.info('SMAPE Results\n{}'.format('-' * 30))
+    logger.info('\nSMAPE Results\n{}'.format('-' * 30))
     logger.info(eval_df['smape'].describe())
 
-    logger.info('KLDIV Results\n{}'.format('-' * 30))
+    logger.info('\nKLDIV Results\n{}'.format('-' * 30))
     logger.info(eval_df['kl'].describe())
 
     csv_fname = os.path.join(input_dir, 'eval_{}.csv'.format(suffix))
@@ -180,11 +177,22 @@ def evaluate(eval_metrics, y_true, y_pred):
         eval_metrics[metric].append(score)
     return eval_metrics
 
+
+def print_eval(scores):
+    logger = logging.getLogger(__name__)
+    Logger.section_break('Overall SMAPE Scores')
+    for setting, score in scores.items():
+        logger.info('{:50} SMAPE:{:0.2f}'.format(str(setting), score[0]))
+
+    Logger.section_break('Overall KLDIV Scores')
+    for setting, score in scores.items():
+        logger.info('{:50} KLDIV:{:0.2f}'.format(str(setting), score[1]))
+
+
 if __name__ == '__main__':
 
     classes = ['Akashiwo', 'Ceratium falcatiforme or fusus', 'Ceratium furca',
-               'Cochlodinium', 'Lingulodinium polyedra',
-               'Prorocentrum micans']
+               'Cochlodinium', 'Lingulodinium polyedra', 'Prorocentrum micans']
 
     # import random
     # for smpl in range(1, len(classes) + 1):
@@ -199,28 +207,43 @@ if __name__ == '__main__':
     logger = logging.getLogger('create-csv')
 
     SMAPE_VS_CLASS_EXP = False
-    COUNT = 'raw count'
+    COUNT = 'cells/mL'
     logger.info('Count form: {}'.format(COUNT))
 
-    MICRO = 'micro'
-    LAB_GT = 'lab gtruth'
-    LAB_PRED = 'lab predicted'
-    PIER_GT = 'pier gtruth'
-    PIER_PRED = 'pier predicted'
+    MICRO_ML, LAB_ML, PIER_ML = set_counts('gtruth', 'cells/mL')
+    _, LAB_P_ML, PIER_P_ML = set_counts('predicted', 'cells/mL')
+    MICRO_RC, LAB_RC, PIER_RC = set_counts('gtruth', 'raw count')
+    MICRO, LAB_P_RC, PIER_P_RC = set_counts('predicted', 'raw count')
+    _, LAB_NRC, PIER_NRC = set_counts('gtruth', 'nrmlzd raw count')
+    _, LAB_P_NRC, PIER_P_NRC = set_counts('predicted', 'nrmlzd raw count')
 
     settings = [
-        (MICRO, LAB_GT),
-        # (MICRO, LAB_PRED),
-        (MICRO, PIER_GT),
-        # (MICRO, PIER_PRED),
-        (LAB_GT, PIER_GT),
-        # (LAB_GT, LAB_PRED),
-        # (PIER_GT, PIER_PRED)
+        (MICRO_ML, LAB_ML),
+        (MICRO_ML, PIER_ML),
+        (LAB_ML, PIER_ML),
+
+        (MICRO_ML, LAB_RC),
+        (MICRO_ML, PIER_RC),
+        (LAB_RC, PIER_RC),
+
+        (MICRO_ML, LAB_NRC),
+        (MICRO_ML, PIER_NRC),
+        (LAB_NRC, PIER_NRC),
+
+        (MICRO_RC, LAB_RC),
+        # (MICRO_RC, LAB_P_RC),
+        (MICRO_RC, PIER_RC),
+        # (MICRO_RC, PIER_P_RC),
+        (LAB_RC, PIER_RC),
+        # (LAB_RC, LAB_P_RC),
+        # (PIER_RC, PIER_P_RC)
     ]
 
+    scores = {}
     for (smpl_gold, smpl_test) in settings:
         Logger.section_break(f'{smpl_gold} vs {smpl_test}')
-        evaluate_counts(input_dir,
-                        sample_method_gold_std=smpl_gold,
-                        sample_method_to_test=smpl_test, classes=classes,
-                        count=COUNT)
+        scores[(smpl_gold, smpl_test)] = evaluate_counts(input_dir,
+                                                         gtruth_smpl_mthd=smpl_gold,
+                                                         exp_smpl_mthd=smpl_test,
+                                                         classes=classes)
+    print_eval(scores)

@@ -41,13 +41,13 @@ SAMPLE_METHODS_CSV = {
     # 'pier': f'{GT_ROOT_DIR}/csv/hab_in_situ_summer2019.csv',
 
     'lab': f'{MODEL_DIR}/hab_in_vitro_summer2019-predictions.csv',
-    ## 'micro': f'{ROOT_DIR}/csv/hab_micro_2017_2019.csv',
-    'micro': f'{GT_ROOT_DIR}/csv/hab_micro_summer2019.csv',
+    'micro': f'{GT_ROOT_DIR}/csv/hab_micro_2017_2019.csv',
+    # 'micro': f'{GT_ROOT_DIR}/csv/hab_micro_summer2019.csv',
     # Prorocentrum micans included
     'pier': f'{MODEL_DIR}/hab_in_situ_summer2019-predictions.csv',
 }
 
-VERSION = 'v3'
+VERSION = 'v4'
 COUNTS_CSV = {
     'plot_format': 'master_counts_{version}-plot.csv'.format(version=VERSION),
     'master_format': 'master_counts_{version}.csv'.format(version=VERSION)}
@@ -93,6 +93,9 @@ def main():
                            'pier total abundance',
                            'micro raw count', 'lab raw count',
                            'pier raw count',
+                           'lab nrmlzd raw count',
+                           'pier nrmlzd raw count',
+                           'micro cells/mL', 'lab cells/mL', 'pier cells/mL',
                            'micro relative abundance', 'lab relative abundance',
                            'pier relative abundance'
                            ]]
@@ -172,6 +175,11 @@ def get_counts(input_csv=None, input_dir=None, output_dir=None, sample_method='m
         main_df = main_df.append(label_df, sort=False)
         logger.debug('Appended {} rows to main dataframe'.format(label_df.shape[0]))
 
+    # Get cells/mL
+    main_df = normalize_imaged_volume(main_df, sample_method)
+
+    main_df = normalize_raw_count(main_df, sample_method)
+
     col_order = list(main_df.columns)
     main_df = main_df[[col_order[-1]] + col_order[:-1]]
     csv_fname = os.path.join(output_dir, f'{sample_method}.csv')
@@ -185,34 +193,60 @@ def transpose_labels(df):
     label = 'gtruth'
     temp_gtruth = df[df['label'] == 'gtruth']
     for sample_method_to_test in ['lab', 'pier']:
-        temp_gtruth = temp_gtruth.rename({
-                                             f'{sample_method_to_test} total abundance': f'{sample_method_to_test} {label} total abundance',
-                                             f'{sample_method_to_test} raw count': f'{sample_method_to_test} {label} raw count',
-                                             f'{sample_method_to_test} relative abundance': f'{sample_method_to_test} {label} relative abundance'},
-                                         axis=1)
+        temp_gtruth = temp_gtruth \
+            .rename({
+            f'{sample_method_to_test} total abundance': f'{sample_method_to_test} {label} total abundance',
+            f'{sample_method_to_test} raw count': f'{sample_method_to_test} {label} raw count',
+            f'{sample_method_to_test} nrmlzd raw count': f'{sample_method_to_test} {label} nrmlzd raw count',
+            f'{sample_method_to_test} relative abundance': f'{sample_method_to_test} {label} relative abundance',
+            f'{sample_method_to_test} cells/mL': f'{sample_method_to_test} {label} cells/mL'},
+            axis=1)
 
     temp_gtruth = temp_gtruth.drop('label', axis=1)
 
     label = 'predicted'
     temp_pred = df[df['label'] == 'prediction']
     for sample_method_to_test in ['lab', 'pier']:
-        temp_pred = temp_pred.rename({
-                                         f'{sample_method_to_test} total abundance': f'{sample_method_to_test} {label} total abundance',
-                                         f'{sample_method_to_test} raw count': f'{sample_method_to_test} {label} raw count',
-                                         f'{sample_method_to_test} relative abundance': f'{sample_method_to_test} {label} relative abundance'},
-                                     axis=1)
+        temp_pred = temp_pred \
+            .rename({
+            f'{sample_method_to_test} total abundance': f'{sample_method_to_test} {label} total abundance',
+            f'{sample_method_to_test} raw count': f'{sample_method_to_test} {label} raw count',
+            f'{sample_method_to_test} nrmlzd raw count': f'{sample_method_to_test} {label} nrmlzd raw count',
+            f'{sample_method_to_test} relative abundance': f'{sample_method_to_test} {label} relative abundance',
+            f'{sample_method_to_test} cells/mL': f'{sample_method_to_test} {label} cells/mL'},
+            axis=1)
     temp_pred = temp_pred.drop('label', axis=1)
 
     concat = temp_pred.merge(temp_gtruth, on=['class', 'datetime',
                                               'micro raw count',
+                                              'micro cells/mL',
                                               'micro relative abundance',
                                               'micro total abundance'])
 
     # sort dataframe
     col = sorted(concat.columns)
-    concat = concat[[col[1]] + [col[0]] + col[8:11] + col[2:9] + col[11:]]
+    concat = concat[sorted(col)]
 
     return concat
+
+
+def normalize_imaged_volume(data, sample_method):
+    if sample_method == 'pier':
+        normalization_factor = 160
+    else:
+        normalization_factor = 60
+    data[f'{sample_method} cells/mL'] = data[
+                                            f'{sample_method} raw count'] / normalization_factor
+    return data
+
+
+def normalize_raw_count(data, sample_method):
+    normalization_factor = 1
+    if sample_method == 'pier':
+        normalization_factor = 160 / 60
+    data[f'{sample_method} nrmlzd raw count'] = data[
+                                                    f'{sample_method} raw count'] / normalization_factor
+    return data
 
 if __name__ == '__main__':
     main()
