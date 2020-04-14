@@ -19,7 +19,7 @@ from scipy import stats
 
 # Project level imports
 from validate_exp.v_utils import concordance_correlation_coefficient, smape, \
-    kl_divergence, set_counts
+    kl_divergence, set_counts, transform_dataset
 from hab_ml.utils.logger import Logger
 
 COUNTS_CSV = 'master_counts_v4.csv'
@@ -40,6 +40,13 @@ def main(args):
     COUNT = 'cells/mL'
     logger.info('Count form: {}'.format(COUNT))
 
+    # Load count dataset
+    df = pd.read_csv(os.path.join(input_dir, COUNTS_CSV))
+
+    logger.info('Dataset size: {}'.format(df.shape[0]))
+    logger.info('Total dates: {}'.format(df['datetime'].nunique()))
+    logger.info('Total classes: {}\n'.format(df['class'].nunique()))
+
     # Set count forms
     MICRO_ML, LAB_ML, PIER_ML = set_counts('gtruth', 'cells/mL')
     _, LAB_P_ML, PIER_P_ML = set_counts('predicted', 'cells/mL')
@@ -48,40 +55,44 @@ def main(args):
     _, LAB_NRC, PIER_NRC = set_counts('gtruth', 'nrmlzd raw count')
     _, LAB_P_NRC, PIER_P_NRC = set_counts('predicted', 'nrmlzd raw count')
 
-    # Set count form comparisons for evaluation
-    settings = [
-        (MICRO_ML, LAB_ML),
-        (MICRO_ML, PIER_ML),
-        (LAB_ML, PIER_ML),
+    # Transform dataset
+    df, tf_settings = transform_dataset(df, (MICRO_ML, LAB_RC, PIER_RC, LAB_NRC,
+                                             PIER_NRC))
 
+    settings = [
+        # Volume vs Raw Count
         (MICRO_ML, LAB_RC),
         (MICRO_ML, PIER_RC),
         (LAB_RC, PIER_RC),
 
+        # Volume vs Normalized Raw Count
         (MICRO_ML, LAB_NRC),
         (MICRO_ML, PIER_NRC),
         (LAB_NRC, PIER_NRC),
-
-        (MICRO_RC, LAB_RC),
-        # (MICRO_RC, LAB_P_RC),
-        (MICRO_RC, PIER_RC),
-        # (MICRO_RC, PIER_P_RC),
-        (LAB_RC, PIER_RC),
-        # (LAB_RC, LAB_P_RC),
-        # (PIER_RC, PIER_P_RC)
     ]
+    settings.extend(tf_settings)
 
     # Evalute counts
-    scores = {}
+    evaluate_settings(settings, df, classes)
+
+
+def evaluate_settings(settings, df, classes):
+    logger = logging.getLogger(__name__)
+    logger.info('Classes selected: {}'.format(classes))
+    df = df[df['class'].isin(classes)].reset_index(drop=True)
+
+    scores = []
     for (smpl_gold, smpl_test) in settings:
         Logger.section_break(f'{smpl_gold} vs {smpl_test}')
-        scores[(smpl_gold, smpl_test)] = evaluate_counts(input_dir,
-                                                         gtruth_smpl_mthd=smpl_gold,
-                                                         exp_smpl_mthd=smpl_test,
-                                                         classes=classes)
-    print_eval(scores)
+        score = evaluate_counts(df, gtruth_smpl_mthd=smpl_gold, exp_smpl_mthd=smpl_test)
+        scores.append()
 
-def evaluate_counts(input_dir, gtruth_smpl_mthd, exp_smpl_mthd, classes):
+
+    print_eval(scores)
+    return scores
+
+
+def evaluate_counts(data, gtruth_smpl_mthd, exp_smpl_mthd):
     """ Evaluates a setting and save it for plotting
 
     Args:
@@ -92,26 +103,20 @@ def evaluate_counts(input_dir, gtruth_smpl_mthd, exp_smpl_mthd, classes):
 
     """
     # Initialize logging
-    suffix = f'{gtruth_smpl_mthd.replace(" ", "-")}_{exp_smpl_mthd.replace(" ", "-")}'
-    if 'cells/mL' in suffix:
-        suffix = suffix.replace('-cells/mL', '-cells')
     logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
 
     # Load dataset
-    data = pd.read_csv(os.path.join(input_dir, COUNTS_CSV))
     df = data.copy()
     df = df.dropna()
 
-    logger.info('Dataset size: {}'.format(df.shape[0]))
-    logger.info('Total dates: {}'.format(df['datetime'].nunique()))
-    logger.info('Total classes: {}\n'.format(df['class'].nunique()))
-
-    # transform dataset
+    logger.debug('Dataset size: {}'.format(df.shape[0]))
+    logger.debug('Total dates: {}'.format(df['datetime'].nunique()))
+    logger.debug('Total classes: {}\n'.format(df['class'].nunique()))
 
     # evaluation
     eval_metrics = evaluate_classes(df, gtruth_smpl_mthd,
-                                    exp_smpl_mthd,
-                                    classes, overall=True, average=True)
+                                    exp_smpl_mthd, overall=True, average=True)
 
     # Create dataframe and save to csv
     eval_df = pd.DataFrame(eval_metrics)
@@ -123,27 +128,22 @@ def evaluate_counts(input_dir, gtruth_smpl_mthd, exp_smpl_mthd, classes):
             continue
         logger.info(f'{metric}: {score:.02f}')
 
-    logger.info('\nSMAPE Results\n{}'.format('-' * 30))
-    logger.info(eval_df['smape'].describe())
+    logger.debug('\nSMAPE Results\n{}'.format('-' * 30))
+    logger.debug(eval_df['smape'].describe())
 
-    logger.info('\nKLDIV Results\n{}'.format('-' * 30))
-    logger.info(eval_df['kl'].describe())
-
-    csv_fname = os.path.join(input_dir, 'eval_{}.csv'.format(suffix))
-    eval_df.to_csv(csv_fname, index=False)
-    logger.info(f'Saved eval csv as {csv_fname}')
-
+    logger.debug('\nKLDIV Results\n{}'.format('-' * 30))
+    logger.debug(eval_df['kl'].describe())
+    # no savinng at the moment
     return results['smape'], results['kl']
 
 def evaluate_classes(df, sample_method_gold_std_col, sample_method_to_test_col,
-                     classes, overall=False, average=False):
+                     overall=False, average=False):
     """ Evaluate over all classes
 
     Args:
         df: Dataset
         sample_method_gold_std_col (str): Column name to compare against (gtruth)
         sample_method_to_test_col (str): Column name to test
-        classes(list): Classes to evaluate
         overall (bool):  Flag to compute aggregated score. Default False
         average (bool): Flag to compute average of all class scores. Default False
 
@@ -152,13 +152,12 @@ def evaluate_classes(df, sample_method_gold_std_col, sample_method_to_test_col,
 
     """
     logger = logging.getLogger(__name__)
-    logger.info('Classes selected: {}'.format(classes))
-    df = df[df['class'].isin(classes)].reset_index(drop=True)
 
     # dictionary for storing scores
     eval_metrics = defaultdict(list)
 
     # evaluate over all classes
+    classes = sorted(df['class'].unique())
     for cls in classes:
         # get class data and assign count data
         temp = df.loc[df['class'] == cls]
@@ -237,11 +236,12 @@ def evaluate(eval_metrics, y_true, y_pred):
 def print_eval(scores):
     logger = logging.getLogger(__name__)
     Logger.section_break('Overall SMAPE Scores')
-    for setting, score in scores.items():
+    for idx, (setting, score) in enumerate(scores.items()):
         logger.info('{:50} SMAPE:{:0.2f}'.format(str(setting), score[0]))
 
+
     Logger.section_break('Overall KLDIV Scores')
-    for setting, score in scores.items():
+    for idx, (setting, score) in enumerate(scores.items()):
         logger.info('{:50} KLDIV:{:0.2f}'.format(str(setting), score[1]))
 
 

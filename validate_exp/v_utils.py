@@ -3,13 +3,21 @@
 Contains mostly computations to plot correlation graphs and other statistics
 """
 
+# Standard Dist Imports
+
+
 # Third party imports
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
 from matplotlib.colors import BoundaryNorm
+from patsy import dmatrices
 from scipy.stats import entropy
+from sklearn.utils import resample
+from statsmodels.formula.api import glm
+
 
 def load_density_data(csv_fname, verbose=False):
     """Load the density csv data and apply transformation"""
@@ -274,3 +282,130 @@ def smape(y_true, y_pred):
     diff = np.abs(y_true - y_pred) / denominator
     diff[denominator == 0] = 0.0
     return 100 * np.mean(diff)
+
+
+def set_counts(label, counts):
+    micro_counts = f'micro {counts}'
+    lab_counts = f'lab {label} {counts}'
+    pier_counts = f'pier {label} {counts}'
+    return micro_counts, lab_counts, pier_counts
+
+
+def bootstrap(x, y, data, stats, n_iterations=10000):
+    """ Bootstrap dataset and measure the resulting statistic
+
+    Usage:
+        for stat in [smape, kl_divergence]:
+            print(stat.__name__)
+            booted_eval_metrics = {}
+            settings = {'micro_vs_lab':(micro_counts, lab_counts),
+                        'micro_vs_pier':(micro_counts, pier_counts),
+                        'lab_vs_pier':(lab_counts, pier_counts)}
+            for setting, (x, y) in settings.items():
+                booted_eval_metrics[setting] = bootstrap(x=x, y=y, stats=stat, data=cls_df)
+            plot_distributions(**booted_eval_metrics)
+
+    Args:
+        x:
+        y:
+        data:
+        stats:
+        n_iterations:
+
+    Returns:
+
+    """
+    score = []
+    n_size = int(len(data))
+    bootstrap_size = 0
+    for i in range(n_iterations):
+        bootstrap_sample = resample(data, n_samples=n_size)
+        score.append(stats(bootstrap_sample[x], bootstrap_sample[y]))
+        bootstrap_size += len(bootstrap_sample)
+    #         if i % 1000 == 0:
+    #             print(f'{i}/{n_iterations} completed. Bootstrap sample size: {bootstrap_size}')
+
+    return score
+
+
+def transform_dataset(data, target_columns):
+    MICRO_ML, LAB_RC, PIER_RC, LAB_NRC, PIER_NRC = target_columns
+
+    def _tfsm(tf_fn, tf_col, pre):
+        _settings = []
+        for col in tf_col:
+            df[pre + col] = df[col].apply(tf_fn)
+
+        _settings.extend(set_settings(pre + MICRO_ML, pre + LAB_RC, pre + PIER_RC))
+        _settings.extend(set_settings(pre + MICRO_ML, pre + LAB_NRC, pre + PIER_NRC))
+
+        return df, _settings
+
+    df = data.copy()
+    settings = []
+
+    pre = 'sqrt '
+    df, sqrt_settings = _tfsm(lambda x: x ** (1 / 2), target_columns, pre)
+
+    lpre = 'logged '
+    df, logged_settings = _tfsm(lambda x: np.log(x, where=0 < x), target_columns, lpre)
+
+    lcpre = 'loggedc '
+    df, loggedc_settings = _tfsm(lambda x: np.log(x + 1), target_columns, lcpre)
+
+    # Fit distributions
+    logged_cols = {col: col.replace(' ', '_').replace('/', '_') for col in df.columns if
+                   col.startswith(lcpre)}
+    y = df.rename(logged_cols, axis=1)
+
+    fpre = 'poisson loggedc '
+    data = fit_distribution(logged_cols, data=y, distribution=sm.families.Poisson(),
+                            pre='poisson ')
+    df = pd.concat([df, data], axis=1, sort=False)
+
+    poisson_setting = set_settings(fpre + MICRO_ML, fpre + LAB_RC, fpre + PIER_RC)
+    poisson_setting.extend(
+        set_settings(fpre + MICRO_ML, fpre + LAB_NRC, fpre + PIER_NRC))
+
+    ffpre = 'nbinom loggedc '
+    data = fit_distribution(logged_cols, data=y,
+                            distribution=sm.families.NegativeBinomial(),
+                            pre='nbinom ')
+    df = pd.concat([df, data], axis=1, sort=False)
+
+    nbinom_setting = (set_settings(ffpre + MICRO_ML, ffpre + LAB_RC, ffpre + PIER_RC))
+    nbinom_setting.extend(
+        set_settings(ffpre + MICRO_ML, ffpre + LAB_NRC, ffpre + PIER_NRC))
+
+    settings += sqrt_settings + logged_settings + loggedc_settings + poisson_setting + \
+                nbinom_setting
+    return df, settings
+
+
+def set_settings(micro, lab, pier):
+    settings = [
+        (micro, lab),
+        (micro, pier),
+        (lab, pier)
+    ]
+    return settings
+
+
+def fit_distribution(tf_col, data, distribution, pre):
+    predicted_cols = []
+    for col in tf_col:
+        expr = '{cc} ~ {cc}'.format(cc=tf_col[col])
+        y, x = dmatrices(expr, data=data, return_type='dataframe')
+        # Fit model
+        model = glm(expr, data=data, family=distribution).fit()
+
+        try:
+            predicted = model.get_prediction(x)
+            predicted_counts = predicted.summary_frame()['mean']
+        except:
+            predicted_counts = model.predict(x)
+
+        predicted_cols.append(pre + col.replace('_', ' '))
+        data[pre + col.replace('_', ' ')] = predicted_counts
+
+    return data[predicted_cols]
