@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
-import statsmodels.api as sm
 from matplotlib.colors import BoundaryNorm
 from scipy.stats import entropy
 from sklearn.utils import resample
@@ -356,84 +355,29 @@ def transform_dataset(data, target_columns):
     df, loggedc_settings = _tfsm(lambda x: np.log(x + 1), target_columns, lcpre)
 
     # Fit distributions
-    rc_cols = {col: col.replace(' ', '_').replace('/', '_') for col in target_columns}
-    logged_cols = {col: col.replace(' ', '_').replace('/', '_') for col in df.columns if
-                   col.startswith(lcpre)}
-    y = df.rename(rc_cols, axis=1)
-    y = y.rename(logged_cols, axis=1)
+    # logged_cols = {col: col.replace(' ', '_').replace('/', '_') for col in df.columns if
+    #                col.startswith(lcpre)}
+    # y = y.rename(logged_cols, axis=1)
 
-    # ==== Poisson, QPoisson and negative binomial raw count ===#
-    ppre = 'poisson '
-    data = fit_distribution(rc_cols, data=y, distribution=sm.families.Poisson(),
-                            pre='poisson ')
-    df = pd.concat([df, data], axis=1, sort=False)
+    distributions = ['poisson', 'qpoisson', 'zinflate poisson', 'nbinom']
 
-    poisson_rc_setting = set_settings(ppre + MICRO_ML, ppre + LAB_RC, ppre + PIER_RC)
-    poisson_rc_setting.extend(
-        set_settings(ppre + MICRO_ML, ppre + LAB_NRC, ppre + PIER_NRC))
+    settings_df = pd.DataFrame()
+    for tgt_col in target_columns:
+        fitted_data = fit_distribution(tgt_col, data, distributions)
+        df = pd.concat([df, fitted_data], axis=1, sort=False)
+        # get all the settings for the sample method
+        settings_df[tgt_col] = list(fitted_data.columns)
 
-    ppre = 'qpoisson '
-    data = fit_distribution(rc_cols, data=y, distribution=sm.families.Poisson(),
-                            pre='qpoisson ')
-    df = pd.concat([df, data], axis=1, sort=False)
+    # Set up setting comparisons
+    f = lambda row: (
+    row[target_columns[0]], row[target_columns[-2]], row[target_columns[-1]])
+    settings = settings_df.apply(f, axis=1).tolist()
+    settings = [set_settings(*dist_setting) for dist_setting in settings]
 
-    qpoisson_rc_setting = set_settings(ppre + MICRO_ML, ppre + LAB_RC, ppre + PIER_RC)
-    qpoisson_rc_setting.extend(
-        set_settings(ppre + MICRO_ML, ppre + LAB_NRC, ppre + PIER_NRC))
+    def flatten_list(_list):
+        return sum(_list, [])
 
-    ppre = 'zinflate poisson '
-    data = fit_distribution(rc_cols, data=y, distribution=sm.families.Poisson(),
-                            pre=ppre)
-    df = pd.concat([df, data], axis=1, sort=False)
-
-    zpoisson_rc_setting = set_settings(ppre + MICRO_ML, ppre + LAB_RC, ppre + PIER_RC)
-    zpoisson_rc_setting.extend(
-        set_settings(ppre + MICRO_ML, ppre + LAB_NRC, ppre + PIER_NRC))
-
-    nbpre = 'nbinom '
-    data = fit_distribution(rc_cols, data=y,
-                            distribution=sm.families.NegativeBinomial(),
-                            pre='nbinom ')
-    df = pd.concat([df, data], axis=1, sort=False)
-
-    nbinom_rc_setting = (set_settings(nbpre + MICRO_ML, nbpre + LAB_RC, nbpre + PIER_RC))
-    nbinom_rc_setting.extend(
-        set_settings(nbpre + MICRO_ML, nbpre + LAB_NRC, nbpre + PIER_NRC))
-
-    # ==== Poisson, QPoisson and negative binomial logged raw count ===#
-    fpre = 'poisson loggedc '
-    data = fit_distribution(logged_cols, data=y, distribution=sm.families.Poisson(),
-                            pre='poisson ')
-    df = pd.concat([df, data], axis=1, sort=False)
-
-    poisson_setting = set_settings(fpre + MICRO_ML, fpre + LAB_RC, fpre + PIER_RC)
-    poisson_setting.extend(
-        set_settings(fpre + MICRO_ML, fpre + LAB_NRC, fpre + PIER_NRC))
-
-    fpre = 'qpoisson loggedc '
-    data = fit_distribution(logged_cols, data=y, distribution=sm.families.Poisson(),
-                            pre='qpoisson ')
-    df = pd.concat([df, data], axis=1, sort=False)
-
-    qpoisson_setting = set_settings(fpre + MICRO_ML, fpre + LAB_RC, fpre + PIER_RC)
-    qpoisson_setting.extend(
-        set_settings(fpre + MICRO_ML, fpre + LAB_NRC, fpre + PIER_NRC))
-
-    ffpre = 'nbinom loggedc '
-    data = fit_distribution(logged_cols, data=y,
-                            distribution=sm.families.NegativeBinomial(),
-                            pre='nbinom ')
-    df = pd.concat([df, data], axis=1, sort=False)
-
-    nbinom_setting = (set_settings(ffpre + MICRO_ML, ffpre + LAB_RC, ffpre + PIER_RC))
-    nbinom_setting.extend(
-        set_settings(ffpre + MICRO_ML, ffpre + LAB_NRC, ffpre + PIER_NRC))
-
-    settings += sqrt_settings + logged_settings + loggedc_settings + \
-                poisson_rc_setting + qpoisson_rc_setting + nbinom_rc_setting + \
-                poisson_setting + qpoisson_setting + nbinom_setting
-
-    settings += zpoisson_rc_setting
+    settings = flatten_list(settings)
 
     return df, settings
 

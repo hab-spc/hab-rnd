@@ -2,6 +2,7 @@ import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
@@ -11,11 +12,37 @@ from sklearn.metrics import mean_absolute_error
 from statsmodels.formula.api import glm
 
 
-def fit_distribution(tf_col, data, distribution, pre):
+def fit_distribution(count_col, data, distributions):
+    logger = logging.getLogger(__name__)
+
+    predicted_df = pd.DataFrame()
+    fitted_scores = pd.DataFrame()
+    for dist in distributions:
+        logger.info(dist)
+        actual_counts = data[count_col]
+        # get predicted counts
+        pred_counts = get_predicted_counts(data[count_col], dist)
+        # test predicted columns
+        scores = test_goodness_fit(actual_counts, pred_counts)
+        scores['distribution'] = dist
+        fitted_scores = fitted_scores.append(scores, ignore_index=True)
+        # save predicted counts under tsfmed sample method
+        predicted_df[dist + " " + count_col] = pred_counts
+
+    logger.info(f'\nDistributions sorted by goodness of fit:\n{"-" * 40}')
+    logger.info(fitted_scores)
+
+    return predicted_df
+
+
+def get_predicted_counts(data, dist):
     """Fit distribution"""
+    col_name = data.name.replace(' ', '_').replace('/', '_')
+    data = data.rename(col_name)
+
+    expr = '{cc} ~ {cc}'.format(cc=col_name)
 
     def get_alpha_value(count, data):
-        expr = '{cc} ~ {cc}'.format(cc=count)
         poisson_model = glm(expr, data=data, family=sm.families.Poisson()).fit()
         data['BB_LAMBDA'] = poisson_model.mu  # lambda value
 
@@ -26,54 +53,51 @@ def fit_distribution(tf_col, data, distribution, pre):
 
         return aux_olsr_results.params[0]
 
-    predicted_cols = []
-    logger = logging.getLogger(__name__)
-    for col in tf_col:
-        # Get data
-        expr = '{cc} ~ {cc}'.format(cc=tf_col[col])
-        y, x = dmatrices(expr, data=data, return_type='dataframe')
+    # Get data
+    data = data.to_frame()
+    y, actual_counts = dmatrices(expr, data=data, return_type='dataframe')
 
-        # Instantiate model
-        if 'zinflate poisson' in pre:
-            model = sm.ZeroInflatedPoisson(y, x, inflation='logit')
-            # model = reg_model.ZeroInflatedPoisson(y, x, x, inflation='logit')
-        else:
-            if 'nbinom' in pre:
-                alpha = get_alpha_value(tf_col[col], data)
-                distribution = sm.families.NegativeBinomial(alpha=alpha)
+    # Instantiate model
+    if 'zinflate poisson' in dist:
+        model = sm.ZeroInflatedPoisson(y, actual_counts, inflation='logit')
+        # model = reg_model.ZeroInflatedPoisson(y, x, x, inflation='logit')
+    else:
+        if 'nbinom' in dist:
+            alpha = get_alpha_value(col_name, data)
+            distribution = sm.families.NegativeBinomial(alpha=alpha)
+        elif 'poisson' in dist:
+            distribution = sm.families.Poisson()
 
-            model = glm(expr, data=data, family=distribution)
+        model = glm(expr, data=data, family=distribution)
 
-        # Fit the model
-        if 'qpoisson' in pre:
+    # Fit the model
+    try:
+        if 'qpoisson' in dist:
             model = model.fit(cov_type='HC1')
         else:
-            model = model.fit(method="nm", maxiter=50)
+            model = model.fit(maxiter=50)
+    except:
+        model = model.fit(method='nm')
 
-        # Predict the data
+    # Predict the data
+    try:
+        predicted = model.get_prediction(actual_counts)
+        predicted_counts = predicted.summary_frame()['mean']
+    except:
         try:
-            predicted = model.get_prediction(x)
-            predicted_counts = predicted.summary_frame()['mean']
+            predicted_counts = model.predict(actual_counts)
         except:
-            # predicted_counts = model.predict(x)
-            zip_mean_pred = model.predict(x, exog_infl=np.ones((len(x), 1)))
+            zip_mean_pred = model.predict(actual_counts,
+                                          exog_infl=np.ones((len(actual_counts), 1)))
             predicted_counts = poisson.ppf(q=0.95, mu=zip_mean_pred)
 
-        # Test distributions
-        actual_counts = data[tf_col[col]]
-        kl_div = kl_divergence(actual_counts, predicted_counts)
-        mae = mean_absolute_error(actual_counts, predicted_counts)
+    return predicted_counts
 
-        logger.info(f'Fitted distribution results\n{"-" * 30}')
-        logger.info(f'KL Div: {kl_div}')
-        logger.info(f'MAE: {mae}')
-        logger.info(model.summary())
 
-        # Save data
-        predicted_cols.append(pre + col.replace('_', ' '))
-        data[pre + col.replace('_', ' ')] = predicted_counts
-
-    return data[predicted_cols]
+def test_goodness_fit(actual_counts, predicted_counts):
+    kl_div = kl_divergence(actual_counts, predicted_counts)
+    mae = mean_absolute_error(actual_counts, predicted_counts)
+    return {'kl div': kl_div, "mae": mae}
 
 
 def print_stats(data):

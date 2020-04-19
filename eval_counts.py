@@ -73,21 +73,19 @@ def main(args):
     settings.extend(tf_settings)
 
     # Evalute counts
-    evaluate_settings(settings, df, classes)
-
+    evaluate_settings(tf_settings, df, classes)
 
 def evaluate_settings(settings, df, classes):
     logger = logging.getLogger(__name__)
     logger.info('Classes selected: {}'.format(classes))
     df = df[df['class'].isin(classes)].reset_index(drop=True)
 
-    scores = []
+    scores = {}
     for (smpl_gold, smpl_test) in settings:
         Logger.section_break(f'{smpl_gold} vs {smpl_test}')
-        score = evaluate_counts(df, gtruth_smpl_mthd=smpl_gold, exp_smpl_mthd=smpl_test)
-        scores.append()
-
-
+        scores[(smpl_gold, smpl_test)] = evaluate_counts(df,
+                                                         gtruth_smpl_mthd=smpl_gold,
+                                                         exp_smpl_mthd=smpl_test)
     print_eval(scores)
     return scores
 
@@ -217,7 +215,7 @@ def evaluate(eval_metrics, y_true, y_pred):
 
     """
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     # get evaluation functions
     eval_fns = get_eval_fn()
