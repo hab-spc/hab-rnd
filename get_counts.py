@@ -51,7 +51,7 @@ SAMPLE_METHODS_CSV = {
 }
 
 ## OUTPUT FILES
-VERSION = 'v4'
+VERSION = 'v6'
 COUNTS_CSV = {
     'plot_format': 'master_counts_{version}-plot.csv'.format(version=VERSION),
     'master_format': 'master_counts_{version}.csv'.format(version=VERSION)}
@@ -82,9 +82,11 @@ def main(args):
         else:
             smpl_counts = pd.read_csv(input_csv)
 
+        # first sampling method (lab)
         if counts_df.empty:
             counts_df = counts_df.append(smpl_counts)
         else:
+            # second sampling case micro
             if sample_method != 'pier':
                 counts_df = counts_df.merge(smpl_counts, on=['datetime', 'class'])
                 counts_df = counts_df.rename({'label_x': 'label'}, axis=1)
@@ -94,7 +96,7 @@ def main(args):
                                                              'label'])
 
     counts_df = counts_df[counts_df['datetime'].isin(valid_dates)]
-    counts_df = counts_df[['datetime', 'class', 'label',
+    counts_df = counts_df[['datetime', 'sampling time', 'class', 'label',
                            'micro total abundance', 'lab total abundance',
                            'pier total abundance',
                            'micro raw count', 'lab raw count',
@@ -105,6 +107,11 @@ def main(args):
                            'micro relative abundance', 'lab relative abundance',
                            'pier relative abundance'
                            ]]
+
+    # HACKEY fix
+    counts_df['sampling time'] = (pd.to_datetime(counts_df['sampling time'],
+                                                 format='%H:%M') + pd.DateOffset(
+        hours=1)).dt.time
 
     logger.info('Counts successfully concatenated')
     csv_fname = os.path.join(output_dir, COUNTS_CSV['plot_format'])
@@ -194,6 +201,47 @@ def get_counts(input_csv=None, input_dir=None, output_dir=None, sample_method='m
     return main_df
 
 
+def reformat_counts(sample_method, data):
+    le = HABLblEncoder(
+        classes_fname='/data6/lekevin/hab-master/hab_ml/experiments/resnet18_pretrained_c34_workshop2019_2/train_data.info')
+
+    label_df = pivot_counts_table(sample_method, data=data, le=le, label_col=CONST.LBL)
+    if CONST.HAB_PRED in data.columns:
+        pred_df = pivot_counts_table(sample_method, data=data, le=le,
+                                     label_col=CONST.HAB_PRED)
+        label_df = label_df.append(pred_df, sort=False)
+
+    return label_df
+
+
+def pivot_counts_table(sample_method, data, le, label_col='label'):
+    logger = logging.getLogger(__name__)
+    # filter for only hab species
+    data['class'] = data[label_col].apply(le.hab_map)
+    data = data[data['class'].isin(le.hab_classes[:-1])]
+    # pivot the data
+    df = pd.pivot_table(data, values=label_col, aggfunc='count', index=['class'])
+    df['class'] = df.index
+    df = df.rename({label_col: f'{sample_method} raw count'}, axis=1)
+    # set classes not found to raw count of 0
+    classes_not_found = list(set(le.hab_classes[:-1]).difference(df['class'].unique()))
+    logger.debug('Classes not found: {}'.format(classes_not_found))
+    if classes_not_found:
+        for cls in classes_not_found:
+            df = df.append({'class': cls, f'{sample_method} raw count': 0},
+                           ignore_index=True)
+
+    df['label'] = 'gtruth' if label_col == 'label' else 'prediction'
+    # compute total abundance
+    df['{} total abundance'.format(sample_method)] = sum(
+        df[f'{sample_method} raw count'])
+    # compute relative abundance
+    df['{} relative abundance'.format(sample_method)] = df[
+                                                            f'{sample_method} raw count'] / \
+                                                        df['{} total abundance'.format(
+                                                            sample_method)] * 100.0
+    return df
+
 def transpose_labels(df):
     """loop over for each sample method (lab & pier) and concatenate it to the main_df"""
     label = 'gtruth'
@@ -223,7 +271,7 @@ def transpose_labels(df):
             axis=1)
     temp_pred = temp_pred.drop('label', axis=1)
 
-    concat = temp_pred.merge(temp_gtruth, on=['class', 'datetime',
+    concat = temp_pred.merge(temp_gtruth, on=['class', 'datetime', 'sampling time',
                                               'micro raw count',
                                               'micro cells/mL',
                                               'micro relative abundance',
@@ -231,7 +279,7 @@ def transpose_labels(df):
 
     # sort dataframe
     col = sorted(concat.columns)
-    concat = concat[sorted(col)]
+    concat = concat[col[:2] + [col[-1]] + col[2:-1]]
 
     return concat
 
