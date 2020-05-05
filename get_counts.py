@@ -51,7 +51,7 @@ SAMPLE_METHODS_CSV = {
 }
 
 ## OUTPUT FILES
-VERSION = 'v6'
+VERSION = 'v7'
 COUNTS_CSV = {
     'plot_format': 'master_counts_{version}-plot.csv'.format(version=VERSION),
     'master_format': 'master_counts_{version}.csv'.format(version=VERSION)}
@@ -96,22 +96,10 @@ def main(args):
                                                              'label'])
 
     counts_df = counts_df[counts_df['datetime'].isin(valid_dates)]
-    counts_df = counts_df[['datetime', 'sampling time', 'class', 'label',
-                           'micro total abundance', 'lab total abundance',
-                           'pier total abundance',
-                           'micro raw count', 'lab raw count',
-                           'pier raw count',
-                           'lab nrmlzd raw count',
-                           'pier nrmlzd raw count',
-                           'micro cells/mL', 'lab cells/mL', 'pier cells/mL',
-                           'micro relative abundance', 'lab relative abundance',
-                           'pier relative abundance'
-                           ]]
 
     # HACKEY fix
-    counts_df['sampling time'] = (pd.to_datetime(counts_df['sampling time'],
-                                                 format='%H:%M') + pd.DateOffset(
-        hours=1)).dt.time
+    # counts_df['sampling time'] = (pd.to_datetime(counts_df['sampling time'],
+    #                                              format='%H:%M') + pd.DateOffset(hours=1)).dt.time
 
     logger.info('Counts successfully concatenated')
     csv_fname = os.path.join(output_dir, COUNTS_CSV['plot_format'])
@@ -120,7 +108,7 @@ def main(args):
 
     csv_fname = os.path.join(output_dir, COUNTS_CSV['master_format'])
     logger.info('\nReformatting counts for error/agreement...')
-    counts_eval_df = transpose_labels(counts_df)
+    counts_eval_df = transpose_labels(counts_df, sort=True)
     logger.info(f'Saving -master version as {csv_fname}')
     counts_eval_df.to_csv(csv_fname, index=False)
 
@@ -242,7 +230,8 @@ def pivot_counts_table(sample_method, data, le, label_col='label'):
                                                             sample_method)] * 100.0
     return df
 
-def transpose_labels(df):
+
+def transpose_labels(df, sort=False):
     """loop over for each sample method (lab & pier) and concatenate it to the main_df"""
     label = 'gtruth'
     temp_gtruth = df[df['label'] == 'gtruth']
@@ -271,15 +260,17 @@ def transpose_labels(df):
             axis=1)
     temp_pred = temp_pred.drop('label', axis=1)
 
-    concat = temp_pred.merge(temp_gtruth, on=['class', 'datetime', 'sampling time',
-                                              'micro raw count',
-                                              'micro cells/mL',
-                                              'micro relative abundance',
-                                              'micro total abundance'])
+    merge_col = ['class', 'datetime', 'sampling time']
+    micro_col = [col for col in df.columns if col.startswith('micro')]
+    if all(mc in df.columns for mc in micro_col):
+        merge_col += micro_col
+
+    concat = temp_pred.merge(temp_gtruth, on=merge_col)
 
     # sort dataframe
-    col = sorted(concat.columns)
-    concat = concat[col[:2] + [col[-1]] + col[2:-1]]
+    if sort:
+        col = sorted(concat.columns)
+        concat = concat[col[:2] + [col[-1]] + col[2:-1]]
 
     return concat
 
