@@ -19,16 +19,31 @@ from scipy import stats
 
 # Project level imports
 from validate_exp.v_utils import concordance_correlation_coefficient, smape, \
-    kl_divergence, set_counts, transform_dataset
+    kl_divergence, set_counts, get_confidence_limit
 from hab_ml.utils.logger import Logger
 
-COUNTS_CSV = 'master_counts_v4.csv'
+COUNTS_CSV = 'master_counts_v7.csv'
 
 
 def main(args):
     # Excluded 3 classes atm
-    classes = ['Akashiwo', 'Ceratium falcatiforme or fusus', 'Ceratium furca',
-               'Cochlodinium', 'Lingulodinium polyedra', 'Prorocentrum micans']
+    classes = ['Akashiwo',
+               'Ceratium falcatiforme or fusus',
+               'Ceratium furca',
+               'Chattonella',
+               'Cochlodinium',
+               'Lingulodinium polyedra',
+               'Prorocentrum micans']
+
+    # classes = ['Akashiwo',
+    #  'Ceratium falcatiforme or fusus',
+    #  'Ceratium furca',
+    #  'Chattonella',
+    #  'Cochlodinium',
+    #  'Gyrodinium',
+    #  'Lingulodinium polyedra',
+    #  'Prorocentrum micans',
+    #  'Pseudo-nitzschia chain']
 
     # Initialize logging
     input_dir = args.input_dir
@@ -55,11 +70,12 @@ def main(args):
     _, LAB_NRC, PIER_NRC = set_counts('gtruth', 'nrmlzd raw count')
     _, LAB_P_NRC, PIER_P_NRC = set_counts('predicted', 'nrmlzd raw count')
 
-    # Transform dataset
-    df, tf_settings = transform_dataset(df, (MICRO_ML, LAB_RC, PIER_RC, LAB_NRC,
-                                             PIER_NRC))
-
     settings = [
+        # Vol vs Vol
+        (MICRO_ML, LAB_ML),
+        (MICRO_ML, PIER_ML),
+        (LAB_ML, PIER_ML),
+
         # Volume vs Raw Count
         (MICRO_ML, LAB_RC),
         (MICRO_ML, PIER_RC),
@@ -70,12 +86,17 @@ def main(args):
         (MICRO_ML, PIER_NRC),
         (LAB_NRC, PIER_NRC),
     ]
-    settings.extend(tf_settings)
+
+    # Transform dataset
+    # df, tf_settings = transform_dataset(df, (MICRO_ML, LAB_RC, PIER_RC, LAB_NRC,
+    #                                          PIER_NRC))
+    # settings.extend(tf_settings)
 
     # Evalute counts
-    evaluate_settings(tf_settings, df, classes)
+    evaluate_settings(settings, df, classes)
 
-def evaluate_settings(settings, df, classes):
+
+def evaluate_settings(settings, df, classes, do_bootstrap=True):
     logger = logging.getLogger(__name__)
     logger.info('Classes selected: {}'.format(classes))
     df = df[df['class'].isin(classes)].reset_index(drop=True)
@@ -87,6 +108,19 @@ def evaluate_settings(settings, df, classes):
                                                          gtruth_smpl_mthd=smpl_gold,
                                                          exp_smpl_mthd=smpl_test)
     print_eval(scores)
+
+    if do_bootstrap:
+        logger.info('Bootstrapping...')
+        setting_lbls = ['micro-lab', 'micro-pier', 'lab-pier'] * 2
+        score_settings = dict(zip(settings, setting_lbls))
+        booted_eval_metrics = {}
+        for stat in [smape, concordance_correlation_coefficient]:
+            logger.info(stat.__name__)
+            for (smpl_gold, smpl_test), setting_lbl in score_settings.items():
+                booted_eval_metrics[setting_lbl] = bootstrap(x=smpl_gold, y=smpl_test,
+                                                             stats=stat, data=df)
+            print_eval_bootstrap(**booted_eval_metrics)
+
     return scores
 
 
@@ -120,7 +154,7 @@ def evaluate_counts(data, gtruth_smpl_mthd, exp_smpl_mthd):
     eval_df = pd.DataFrame(eval_metrics)
     logger.info('error and agreements\n{}'.format('-' * 30))
     results = dict(zip(eval_metrics.keys(),
-                       eval_df.loc[eval_df['class'] == 'overall'].values.tolist()[0]))
+                       eval_df.loc[eval_df['class'] == 'average'].values.tolist()[0]))
     for metric, score in results.items():
         if metric == 'class':
             continue
@@ -129,10 +163,10 @@ def evaluate_counts(data, gtruth_smpl_mthd, exp_smpl_mthd):
     logger.debug('\nSMAPE Results\n{}'.format('-' * 30))
     logger.debug(eval_df['smape'].describe())
 
-    logger.debug('\nKLDIV Results\n{}'.format('-' * 30))
-    logger.debug(eval_df['kl'].describe())
+    logger.info('\nCCC Results\n{}'.format('-' * 30))
+    logger.info(eval_df['ccc'].describe())
     # no savinng at the moment
-    return results['smape'], results['kl']
+    return results['smape'], results['ccc']
 
 def evaluate_classes(df, sample_method_gold_std_col, sample_method_to_test_col,
                      overall=False, average=False):
@@ -215,7 +249,7 @@ def evaluate(eval_metrics, y_true, y_pred):
 
     """
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
 
     # get evaluation functions
     eval_fns = get_eval_fn()
@@ -241,6 +275,39 @@ def print_eval(scores):
     Logger.section_break('Overall KLDIV Scores')
     for idx, (setting, score) in enumerate(scores.items()):
         logger.info('{:50} KLDIV:{:0.2f}'.format(str(setting), score[1]))
+
+
+def print_eval_bootstrap(**kwargs):
+    logger = logging.getLogger(__name__)
+
+    def print_error(data):
+        logger.info(f'COUNT: {len(data)}')
+        logger.info(f'AVG: {np.mean(data)}')
+        logger.info(f'MEDIAN: {np.median(data)}')
+        logger.info(f'STD DEV: {np.std(data)}')
+        logger.info(f'VAR: {np.var(data)}')
+        logger.info('%.1f confidence interval %.2f%% and %.2f%%\n' % (
+            get_confidence_limit(data)))
+
+    for idx, dist_title in enumerate(kwargs):
+        logger.info('{}\n{}'.format(dist_title, '-' * 30))
+        print_error(kwargs[dist_title])
+
+
+def bootstrap(x, y, data, stats, n_iterations=10000):
+    from sklearn.utils import resample
+
+    score = []
+    n_size = int(len(data) * .8)
+    bootstrap_size = 0
+    for i in range(n_iterations):
+        bootstrap_sample = resample(data, n_samples=n_size)
+        score.append(stats(bootstrap_sample[x], bootstrap_sample[y]))
+        bootstrap_size += len(bootstrap_sample)
+    #         if i % 1000 == 0:
+    #             print(f'{i}/{n_iterations} completed. Bootstrap sample size: {bootstrap_size}')
+
+    return score
 
 
 if __name__ == '__main__':
