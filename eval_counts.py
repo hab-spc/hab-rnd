@@ -18,8 +18,9 @@ from scipy.spatial import distance
 from scipy import stats
 
 # Project level imports
-from validate_exp.v_utils import concordance_correlation_coefficient, smape, \
-    kl_divergence, set_counts, get_confidence_limit
+from validate_exp.stat_fns import concordance_correlation_coefficient, kl_divergence, \
+    smape
+from validate_exp.v_utils import set_counts, get_confidence_limit
 from hab_ml.utils.logger import Logger
 
 COUNTS_CSV = 'master_counts_v7.csv'
@@ -79,7 +80,7 @@ def main(args):
     stat = smape
 
     # Evalute counts
-    evaluate_settings(settings, stat, df, classes)
+    evaluate_settings(score_settings, stat, df, classes)
 
 
 def evaluate_settings(settings, stat, df, classes=None, do_bootstrap=True):
