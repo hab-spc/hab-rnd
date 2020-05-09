@@ -63,51 +63,54 @@ def main(args):
     logger.info('Total classes: {}\n'.format(df['class'].nunique()))
 
     # Set count forms
-    MICRO_ML, LAB_ML, PIER_ML = set_counts('gtruth', 'cells/mL')
-    _, LAB_P_ML, PIER_P_ML = set_counts('predicted', 'cells/mL')
-    MICRO_RC, LAB_RC, PIER_RC = set_counts('gtruth', 'raw count')
-    MICRO, LAB_P_RC, PIER_P_RC = set_counts('predicted', 'raw count')
-    _, LAB_NRC, PIER_NRC = set_counts('gtruth', 'nrmlzd raw count')
-    _, LAB_P_NRC, PIER_P_NRC = set_counts('predicted', 'nrmlzd raw count')
+    volumetric_counts = set_counts('gtruth', 'cells/mL', micro_default=True)
+    rc_counts = set_counts('gtruth', 'raw count', micro_default=True)
+    nrmlzd_counts = set_counts('gtruth', 'nrmlzd raw count', micro_default=True)
+    rel_counts = set_counts('gtruth', 'relative abundance', micro_default=False)
+    rel_counts = ['micro cells/mL relative abundance'] + list(rel_counts[1:])
 
-    settings = [
-        # Vol vs Vol
-        (MICRO_ML, LAB_ML),
-        (MICRO_ML, PIER_ML),
-        (LAB_ML, PIER_ML),
+    # Set settings
+    counts = nrmlzd_counts
+    score_settings = {'micro-lab': (counts[0], counts[1]),
+                      'micro-pier': (counts[0], counts[2]),
+                      'lab-pier': (counts[1], counts[2])}
 
-        # Volume vs Raw Count
-        (MICRO_ML, LAB_RC),
-        (MICRO_ML, PIER_RC),
-        (LAB_RC, PIER_RC),
-
-        # Volume vs Normalized Raw Count
-        (MICRO_ML, LAB_NRC),
-        (MICRO_ML, PIER_NRC),
-        (LAB_NRC, PIER_NRC),
-    ]
-
-    # Transform dataset
-    # df, tf_settings = transform_dataset(df, (MICRO_ML, LAB_RC, PIER_RC, LAB_NRC,
-    #                                          PIER_NRC))
-    # settings.extend(tf_settings)
+    # Stat
+    stat = smape
 
     # Evalute counts
-    evaluate_settings(settings, df, classes)
+    evaluate_settings(settings, stat, df, classes)
 
 
-def evaluate_settings(settings, df, classes, do_bootstrap=True):
-    logger = logging.getLogger(__name__)
-    logger.info('Classes selected: {}'.format(classes))
-    df = df[df['class'].isin(classes)].reset_index(drop=True)
+def evaluate_settings(settings, stat, df, classes=None, do_bootstrap=True):
+    """
+
+    Evaluate
+
+    Args:
+        settings:
+        stat:
+        df:
+        classes:
+        do_bootstrap:
+
+    Returns:
+
+    """
+    logger = logging.getLogger('test')
+    logger.setLevel(logging.CRITICAL)
+
+    if classes:
+        logger.info('Classes selected: {}'.format(classes))
+        df = df[df['class'].isin(classes)].reset_index(drop=True)
 
     scores = {}
-    for (smpl_gold, smpl_test) in settings:
-        Logger.section_break(f'{smpl_gold} vs {smpl_test}')
-        scores[(smpl_gold, smpl_test)] = evaluate_counts(df,
-                                                         gtruth_smpl_mthd=smpl_gold,
-                                                         exp_smpl_mthd=smpl_test)
-    print_eval(scores)
+    logger.debug('#===== Camera Counts =====#')
+    logger.debug('{:22}    {:22} Score'.format('Pred (Y)', 'Gtruth (X)'))
+    logger.debug(f'{"-" * 70}')
+    for setting, (gtruth, pred) in settings.items():
+        scores[(gtruth, pred)] = evaluate_counts(df, gtruth=gtruth, pred=pred, stat=stat)
+        logger.debug('{:25} {:25} {}'.format(pred, gtruth, scores[(gtruth, pred)]))
 
     if do_bootstrap:
         logger.info('Bootstrapping...')
@@ -116,15 +119,15 @@ def evaluate_settings(settings, df, classes, do_bootstrap=True):
         booted_eval_metrics = {}
         for stat in [smape, concordance_correlation_coefficient]:
             logger.info(stat.__name__)
-            for (smpl_gold, smpl_test), setting_lbl in score_settings.items():
-                booted_eval_metrics[setting_lbl] = bootstrap(x=smpl_gold, y=smpl_test,
+            for (gtruth, pred), setting_lbl in score_settings.items():
+                booted_eval_metrics[setting_lbl] = bootstrap(x=gtruth, y=pred,
                                                              stats=stat, data=df)
             print_eval_bootstrap(**booted_eval_metrics)
 
-    return scores
+    return list(scores.values())
 
 
-def evaluate_counts(data, gtruth_smpl_mthd, exp_smpl_mthd):
+def evaluate_counts(data, gtruth, pred, stat):
     """ Evaluates a setting and save it for plotting
 
     Args:
@@ -138,44 +141,23 @@ def evaluate_counts(data, gtruth_smpl_mthd, exp_smpl_mthd):
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
 
-    # Load dataset
-    df = data.copy()
-    df = df.dropna()
+    x, y = data[gtruth], data[pred]
+    score = stat(x, y)
 
-    logger.debug('Dataset size: {}'.format(df.shape[0]))
-    logger.debug('Total dates: {}'.format(df['datetime'].nunique()))
-    logger.debug('Total classes: {}\n'.format(df['class'].nunique()))
+    if not isinstance(score, float):
+        score = score[0]
 
-    # evaluation
-    eval_metrics = evaluate_classes(df, gtruth_smpl_mthd,
-                                    exp_smpl_mthd, overall=True, average=True)
+    return score
 
-    # Create dataframe and save to csv
-    eval_df = pd.DataFrame(eval_metrics)
-    logger.info('error and agreements\n{}'.format('-' * 30))
-    results = dict(zip(eval_metrics.keys(),
-                       eval_df.loc[eval_df['class'] == 'average'].values.tolist()[0]))
-    for metric, score in results.items():
-        if metric == 'class':
-            continue
-        logger.info(f'{metric}: {score:.02f}')
 
-    logger.debug('\nSMAPE Results\n{}'.format('-' * 30))
-    logger.debug(eval_df['smape'].describe())
-
-    logger.info('\nCCC Results\n{}'.format('-' * 30))
-    logger.info(eval_df['ccc'].describe())
-    # no savinng at the moment
-    return results['smape'], results['ccc']
-
-def evaluate_classes(df, sample_method_gold_std_col, sample_method_to_test_col,
+def evaluate_classes(df, gtruth, pred,
                      overall=False, average=False):
     """ Evaluate over all classes
 
     Args:
         df: Dataset
-        sample_method_gold_std_col (str): Column name to compare against (gtruth)
-        sample_method_to_test_col (str): Column name to test
+        gtruth (str): Column name to compare against (gtruth)
+        pred (str): Column name to test
         overall (bool):  Flag to compute aggregated score. Default False
         average (bool): Flag to compute average of all class scores. Default False
 
@@ -193,8 +175,7 @@ def evaluate_classes(df, sample_method_gold_std_col, sample_method_to_test_col,
     for cls in classes:
         # get class data and assign count data
         temp = df.loc[df['class'] == cls]
-        cls_smpl_gold_std, cls_smpl_to_test = temp[sample_method_gold_std_col], temp[
-            sample_method_to_test_col]
+        cls_smpl_gold_std, cls_smpl_to_test = temp[gtruth], temp[pred]
 
         # run through all evaluation functions
         eval_metrics = evaluate(eval_metrics, y_true=cls_smpl_gold_std,
@@ -210,8 +191,8 @@ def evaluate_classes(df, sample_method_gold_std_col, sample_method_to_test_col,
 
     if overall:
         eval_metrics['class'].append('overall')
-        overall_y_true, overall_y_pred = df[sample_method_gold_std_col], df[
-            sample_method_to_test_col]
+        overall_y_true, overall_y_pred = df[gtruth], df[
+            pred]
         eval_metrics = evaluate(eval_metrics, y_true=overall_y_true,
                                 y_pred=overall_y_pred)
 

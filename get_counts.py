@@ -33,7 +33,8 @@ from utils.logger import Logger
 
 GT_ROOT_DIR = '/data6/phytoplankton-db'
 # To update the model, change this directory
-MODEL_DIR = '/data6/lekevin/hab-master/hab_ml/experiments/resnet18_pretrained_c34_workshop2019_2'
+# MODEL_DIR = '/data6/lekevin/hab-master/hab_ml/experiments/resnet18_pretrained_c34_workshop2019_2'
+MODEL_DIR = '/data6/yuanzhouyuan/hab/hab-ml/experiments/baseline_new_weighted_loss'
 
 ## INPUT FILES
 VALID_DATES = f'{GT_ROOT_DIR}/valid_collection_dates_master.txt'
@@ -51,7 +52,7 @@ SAMPLE_METHODS_CSV = {
 }
 
 ## OUTPUT FILES
-VERSION = 'v7'
+VERSION = 'v8'
 COUNTS_CSV = {
     'plot_format': 'master_counts_{version}-plot.csv'.format(version=VERSION),
     'master_format': 'master_counts_{version}.csv'.format(version=VERSION)}

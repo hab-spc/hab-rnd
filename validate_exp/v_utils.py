@@ -12,10 +12,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from matplotlib.colors import BoundaryNorm
-from scipy.stats import entropy
 from sklearn.utils import resample
-
-from transform_data import fit_distribution
 
 
 def load_density_data(csv_fname, verbose=False):
@@ -213,61 +210,6 @@ def compute_accuracies(df):
         xpoint = gr['micro_proro'].values[0]
         print(f'[XAXIS {xpoint:.3f} | DATE {ii}] TRUE POS: {true_pos_rate:.3f} | FALSE POS: {false_pos_rate:.3f} || TRUE NEG: {true_neg_rate:.3f} | FALSE NEG: {false_neg_rate:.3f}')
 
-def concordance_correlation_coefficient(y_true, y_pred,
-                                        sample_weight=None,
-                                        multioutput='uniform_average'):
-    """Concordance correlation coefficient.
-    The concordance correlation coefficient is a measure of inter-rater agreement.
-    It measures the deviation of the relationship between predicted and true values
-    from the 45 degree angle.
-    Read more: https://en.wikipedia.org/wiki/Concordance_correlation_coefficient
-    Original paper: Lawrence, I., and Kuei Lin. "A concordance correlation coefficient to evaluate reproducibility." Biometrics (1989): 255-268.
-    Parameters
-    ----------
-    y_true : array-like of shape = (n_samples) or (n_samples, n_outputs)
-        Ground truth (correct) target values.
-    y_pred : array-like of shape = (n_samples) or (n_samples, n_outputs)
-        Estimated target values.
-    Returns
-    -------
-    loss : A float in the range [-1,1]. A value of 1 indicates perfect agreement
-    between the true and the predicted values.
-    Examples
-    --------
-    >>> from sklearn.metrics import concordance_correlation_coefficient
-    >>> y_true = [3, -0.5, 2, 7]
-    >>> y_pred = [2.5, 0.0, 2, 8]
-    >>> concordance_correlation_coefficient(y_true, y_pred)
-    0.97678916827853024
-    """
-    cor = np.corrcoef(y_true, y_pred)[0][1]
-
-    mean_true = np.mean(y_true)
-    mean_pred = np.mean(y_pred)
-
-    var_true = np.var(y_true)
-    var_pred = np.var(y_pred)
-
-    sd_true = np.std(y_true)
-    sd_pred = np.std(y_pred)
-
-    numerator = 2 * cor * sd_true * sd_pred
-
-    denominator = var_true + var_pred + (mean_true - mean_pred) ** 2
-
-    return numerator / denominator
-
-
-def kl_divergence(p, q):
-    eps = 0.01
-    pp = p + eps
-    pp /= sum(pp)
-
-    qq = q + eps
-    qq /= sum(qq)
-    kl_div = entropy(pp, qq, base=10.)
-    return kl_div
-
 
 # def kl_divergence(p, q):
 # return np.sum(np.where(p != 0, p * np.log(p / q), 0))
@@ -281,6 +223,33 @@ def smape(y_true, y_pred):
     diff = np.abs(y_true - y_pred) / denominator
     diff[denominator == 0] = 0.0
     return 100 * np.mean(diff)
+
+
+def smape2(df, smpl_gold, smpl_test):
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    rel_err = []
+    grouped_df = df.groupby('datetime')
+
+    num_ = np.zeros((26, 9))
+    denom_ = np.zeros((26, 9))
+
+    for idx, (date, single_date) in enumerate(grouped_df):
+        y_true = single_date[smpl_gold]
+        y_pred = single_date[smpl_test]
+        num = np.sum(np.abs(y_true - y_pred))
+        denom = np.sum(np.abs(y_true + y_pred))
+
+        num_[idx, :] = np.abs(y_true - y_pred)
+        denom_[idx, :] = np.abs(y_true + y_pred)
+
+        if num / denom == 1.0:
+            logger.debug('BIG ERROR')
+
+        rel_err.append(num / denom)
+    smape = np.mean(rel_err)
+    logger.info(f'Relative Error: {rel_err}')
+    logger.info('SMAPE: {}'.format(smape))
 
 
 def set_counts(label, counts, micro_default=True):
@@ -328,6 +297,8 @@ def bootstrap(x, y, data, stats, n_iterations=10000):
 
 
 def transform_dataset(data, target_columns):
+    from transform_data import fit_distribution
+
     logger = logging.getLogger(__name__)
     logger.info('Transforming dataset...')
     MICRO_ML, LAB_RC, PIER_RC, LAB_NRC, PIER_NRC = target_columns
@@ -363,6 +334,7 @@ def transform_dataset(data, target_columns):
 
     settings_df = pd.DataFrame()
     for tgt_col in target_columns:
+        logger.info(tgt_col)
         fitted_data = fit_distribution(tgt_col, data, distributions)
         df = pd.concat([df, fitted_data], axis=1, sort=False)
         # get all the settings for the sample method
@@ -389,3 +361,12 @@ def set_settings(micro, lab, pier):
         (lab, pier)
     ]
     return settings
+
+
+def get_confidence_limit(stats):
+    alpha = 0.95
+    p = ((1.0 - alpha) / 2.0) * 100
+    lower = max(0.0, np.percentile(stats, p))
+    p = (alpha + ((1.0 - alpha) / 2.0)) * 100
+    upper = min(100.0, np.percentile(stats, p))
+    return alpha * 100, lower, upper

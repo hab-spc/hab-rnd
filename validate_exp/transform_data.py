@@ -18,19 +18,18 @@ def fit_distribution(count_col, data, distributions):
     predicted_df = pd.DataFrame()
     fitted_scores = pd.DataFrame()
     for dist in distributions:
-        logger.info(dist)
         actual_counts = data[count_col]
         # get predicted counts
-        pred_counts = get_predicted_counts(data[count_col], dist)
+        pred_counts, fit_score = get_predicted_counts(actual_counts, dist)
         # test predicted columns
-        scores = test_goodness_fit(actual_counts, pred_counts)
-        scores['distribution'] = dist
-        fitted_scores = fitted_scores.append(scores, ignore_index=True)
+        fit_score['distribution'] = dist
+        fitted_scores = fitted_scores.append(fit_score, ignore_index=True)
         # save predicted counts under tsfmed sample method
         predicted_df[dist + " " + count_col] = pred_counts
 
     logger.info(f'\nDistributions sorted by goodness of fit:\n{"-" * 40}')
     logger.info(fitted_scores)
+    logger.info('\n')
 
     return predicted_df
 
@@ -54,8 +53,8 @@ def get_predicted_counts(data, dist):
         return aux_olsr_results.params[0]
 
     # Get data
-    data = data.to_frame()
-    y, actual_counts = dmatrices(expr, data=data, return_type='dataframe')
+    data_ = data.to_frame()
+    y, actual_counts = dmatrices(expr, data=data_, return_type='dataframe')
 
     # Instantiate model
     if 'zinflate poisson' in dist:
@@ -63,12 +62,12 @@ def get_predicted_counts(data, dist):
         # model = reg_model.ZeroInflatedPoisson(y, x, x, inflation='logit')
     else:
         if 'nbinom' in dist:
-            alpha = get_alpha_value(col_name, data)
+            alpha = get_alpha_value(col_name, data_)
             distribution = sm.families.NegativeBinomial(alpha=alpha)
         elif 'poisson' in dist:
             distribution = sm.families.Poisson()
 
-        model = glm(expr, data=data, family=distribution)
+        model = glm(expr, data=data_, family=distribution)
 
     # Fit the model
     try:
@@ -91,13 +90,24 @@ def get_predicted_counts(data, dist):
                                           exog_infl=np.ones((len(actual_counts), 1)))
             predicted_counts = poisson.ppf(q=0.95, mu=zip_mean_pred)
 
-    return predicted_counts
+    # test fit scores
+    fit_scores = test_goodness_fit(data, predicted_counts, model)
+
+    return predicted_counts, fit_scores
 
 
-def test_goodness_fit(actual_counts, predicted_counts):
-    kl_div = kl_divergence(actual_counts, predicted_counts)
-    mae = mean_absolute_error(actual_counts, predicted_counts)
-    return {'kl div': kl_div, "mae": mae}
+def test_goodness_fit(actual_counts, predicted_counts, model):
+    try:
+        kl_div = kl_divergence(actual_counts, predicted_counts)
+        mae = mean_absolute_error(actual_counts, predicted_counts)
+        pchi = model.pearson_chi2
+        dev = model.deviance
+        st_sig = 268.531 < pchi
+
+        return {'kl div': kl_div, "mae": mae, 'pearson chi2': pchi, 'deviance': dev,
+                'statistically significant': st_sig}
+    except:
+        return {'kl div': kl_div, "mae": mae}
 
 
 def print_stats(data):
