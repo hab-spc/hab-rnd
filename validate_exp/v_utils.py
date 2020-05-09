@@ -3,12 +3,16 @@
 Contains mostly computations to plot correlation graphs and other statistics
 """
 
+# Standard Dist Imports
+import logging
+
 # Third party imports
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from matplotlib.colors import BoundaryNorm
+from sklearn.utils import resample
 
 
 def load_density_data(csv_fname, verbose=False):
@@ -206,52 +210,12 @@ def compute_accuracies(df):
         xpoint = gr['micro_proro'].values[0]
         print(f'[XAXIS {xpoint:.3f} | DATE {ii}] TRUE POS: {true_pos_rate:.3f} | FALSE POS: {false_pos_rate:.3f} || TRUE NEG: {true_neg_rate:.3f} | FALSE NEG: {false_neg_rate:.3f}')
 
-def concordance_correlation_coefficient(y_true, y_pred,
-                                        sample_weight=None,
-                                        multioutput='uniform_average'):
-    """Concordance correlation coefficient.
-    The concordance correlation coefficient is a measure of inter-rater agreement.
-    It measures the deviation of the relationship between predicted and true values
-    from the 45 degree angle.
-    Read more: https://en.wikipedia.org/wiki/Concordance_correlation_coefficient
-    Original paper: Lawrence, I., and Kuei Lin. "A concordance correlation coefficient to evaluate reproducibility." Biometrics (1989): 255-268.
-    Parameters
-    ----------
-    y_true : array-like of shape = (n_samples) or (n_samples, n_outputs)
-        Ground truth (correct) target values.
-    y_pred : array-like of shape = (n_samples) or (n_samples, n_outputs)
-        Estimated target values.
-    Returns
-    -------
-    loss : A float in the range [-1,1]. A value of 1 indicates perfect agreement
-    between the true and the predicted values.
-    Examples
-    --------
-    >>> from sklearn.metrics import concordance_correlation_coefficient
-    >>> y_true = [3, -0.5, 2, 7]
-    >>> y_pred = [2.5, 0.0, 2, 8]
-    >>> concordance_correlation_coefficient(y_true, y_pred)
-    0.97678916827853024
-    """
-    cor = np.corrcoef(y_true, y_pred)[0][1]
 
-    mean_true = np.mean(y_true)
-    mean_pred = np.mean(y_pred)
-
-    var_true = np.var(y_true)
-    var_pred = np.var(y_pred)
-
-    sd_true = np.std(y_true)
-    sd_pred = np.std(y_pred)
-
-    numerator = 2 * cor * sd_true * sd_pred
-
-    denominator = var_true + var_pred + (mean_true - mean_pred) ** 2
-
-    return numerator / denominator
+# def kl_divergence(p, q):
+# return np.sum(np.where(p != 0, p * np.log(p / q), 0))
 
 # def smape(y_true, y_pred):
-#     return 100.0 / len(y_true) * np.sum(2 * np.abs(y_pred - y_true) / (np.abs(y_true)
+#     return 100.0 / len(y_true) * np.sum(np.abs(y_pred - y_true) / (np.abs(y_true)
 #                                                                        + np.abs(y_pred)))
 
 def smape(y_true, y_pred):
@@ -259,3 +223,150 @@ def smape(y_true, y_pred):
     diff = np.abs(y_true - y_pred) / denominator
     diff[denominator == 0] = 0.0
     return 100 * np.mean(diff)
+
+
+def smape2(df, smpl_gold, smpl_test):
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    rel_err = []
+    grouped_df = df.groupby('datetime')
+
+    num_ = np.zeros((26, 9))
+    denom_ = np.zeros((26, 9))
+
+    for idx, (date, single_date) in enumerate(grouped_df):
+        y_true = single_date[smpl_gold]
+        y_pred = single_date[smpl_test]
+        num = np.sum(np.abs(y_true - y_pred))
+        denom = np.sum(np.abs(y_true + y_pred))
+
+        num_[idx, :] = np.abs(y_true - y_pred)
+        denom_[idx, :] = np.abs(y_true + y_pred)
+
+        if num / denom == 1.0:
+            logger.debug('BIG ERROR')
+
+        rel_err.append(num / denom)
+    smape = np.mean(rel_err)
+    logger.info(f'Relative Error: {rel_err}')
+    logger.info('SMAPE: {}'.format(smape))
+
+
+def set_counts(label, counts, micro_default=True):
+    micro_counts = 'micro {}'.format('cells/mL' if micro_default else counts)
+    lab_counts = f'lab {label} {counts}'
+    pier_counts = f'pier {label} {counts}'
+    return micro_counts, lab_counts, pier_counts
+
+
+def bootstrap(x, y, data, stats, n_iterations=10000):
+    """ Bootstrap dataset and measure the resulting statistic
+
+    Usage:
+        for stat in [smape, kl_divergence]:
+            print(stat.__name__)
+            booted_eval_metrics = {}
+            settings = {'micro_vs_lab':(micro_counts, lab_counts),
+                        'micro_vs_pier':(micro_counts, pier_counts),
+                        'lab_vs_pier':(lab_counts, pier_counts)}
+            for setting, (x, y) in settings.items():
+                booted_eval_metrics[setting] = bootstrap(x=x, y=y, stats=stat, data=cls_df)
+            plot_distributions(**booted_eval_metrics)
+
+    Args:
+        x:
+        y:
+        data:
+        stats:
+        n_iterations:
+
+    Returns:
+
+    """
+    score = []
+    n_size = int(len(data))
+    bootstrap_size = 0
+    for i in range(n_iterations):
+        bootstrap_sample = resample(data, n_samples=n_size)
+        score.append(stats(bootstrap_sample[x], bootstrap_sample[y]))
+        bootstrap_size += len(bootstrap_sample)
+    #         if i % 1000 == 0:
+    #             print(f'{i}/{n_iterations} completed. Bootstrap sample size: {bootstrap_size}')
+
+    return score
+
+
+def transform_dataset(data, target_columns):
+    from transform_data import fit_distribution
+
+    logger = logging.getLogger(__name__)
+    logger.info('Transforming dataset...')
+    MICRO_ML, LAB_RC, PIER_RC, LAB_NRC, PIER_NRC = target_columns
+
+    def _tfsm(tf_fn, tf_col, pre):
+        _settings = []
+        for col in tf_col:
+            df[pre + col] = df[col].apply(tf_fn)
+
+        _settings.extend(set_settings(pre + MICRO_ML, pre + LAB_RC, pre + PIER_RC))
+        _settings.extend(set_settings(pre + MICRO_ML, pre + LAB_NRC, pre + PIER_NRC))
+
+        return df, _settings
+
+    df = data.copy()
+    settings = []
+
+    pre = 'sqrt '
+    df, sqrt_settings = _tfsm(lambda x: x ** (1 / 2), target_columns, pre)
+
+    lpre = 'logged '
+    df, logged_settings = _tfsm(lambda x: np.log(x, where=0 < x), target_columns, lpre)
+
+    lcpre = 'loggedc '
+    df, loggedc_settings = _tfsm(lambda x: np.log(x + 1), target_columns, lcpre)
+
+    # Fit distributions
+    # logged_cols = {col: col.replace(' ', '_').replace('/', '_') for col in df.columns if
+    #                col.startswith(lcpre)}
+    # y = y.rename(logged_cols, axis=1)
+
+    distributions = ['poisson', 'qpoisson', 'zinflate poisson', 'nbinom']
+
+    settings_df = pd.DataFrame()
+    for tgt_col in target_columns:
+        logger.info(tgt_col)
+        fitted_data = fit_distribution(tgt_col, data, distributions)
+        df = pd.concat([df, fitted_data], axis=1, sort=False)
+        # get all the settings for the sample method
+        settings_df[tgt_col] = list(fitted_data.columns)
+
+    # Set up setting comparisons
+    f = lambda row: (
+    row[target_columns[0]], row[target_columns[-2]], row[target_columns[-1]])
+    settings = settings_df.apply(f, axis=1).tolist()
+    settings = [set_settings(*dist_setting) for dist_setting in settings]
+
+    def flatten_list(_list):
+        return sum(_list, [])
+
+    settings = flatten_list(settings)
+
+    return df, settings
+
+
+def set_settings(micro, lab, pier):
+    settings = [
+        (micro, lab),
+        (micro, pier),
+        (lab, pier)
+    ]
+    return settings
+
+
+def get_confidence_limit(stats):
+    alpha = 0.95
+    p = ((1.0 - alpha) / 2.0) * 100
+    lower = max(0.0, np.percentile(stats, p))
+    p = (alpha + ((1.0 - alpha) / 2.0)) * 100
+    upper = min(100.0, np.percentile(stats, p))
+    return alpha * 100, lower, upper
