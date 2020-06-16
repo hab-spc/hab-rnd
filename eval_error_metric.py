@@ -1,6 +1,22 @@
 """
 
 evaluate each stat
+
+Usage
+-----
+>>> from eval_error_metric import compare_metrics
+>>> from validate_exp.stat_fns import ERROR_STATS, AGREEMENT_STATS
+>>> logger = logging.getLogger(__name__)
+>>> logger.setLevel(logging.INFO)
+
+# Load counts dataset
+>>> data_ = {}
+>>> data_['camera'] = pd.read_csv(COUNTS_CSV['counts'])
+>>> data_['classifier'] = pd.read_csv(COUNTS_CSV['counts-v9'])
+
+# error_scores, agreemenet_scores = main()
+>>> error_scores = compare_metrics(ERROR_STATS, data=data_)
+>>> agreement_scores = compare_metrics(AGREEMENT_STATS, data=data_)
 """
 import argparse
 import logging
@@ -8,34 +24,46 @@ import os
 
 import pandas as pd
 
-from counts_analysis.c_utils import COUNTS_CSV, CLASSES, set_counts, set_settings
+from counts_analysis.c_utils import COUNTS_CSV, CLASSES, set_counts, set_settings, \
+    CORRELATED_CLASSES
 from eval_counts import evaluate_settings, evaluate_counts
 from hab_ml.utils.logger import Logger
 from validate_exp.stat_fns import *
 
-COMPARE_ALL_FLAG = True
+COMPARE_ALL_FLAG = False
 FILTER_CLASSES_FLAG = False
-
+CORRELATED_CLASSES_FLAG = False
 
 def run_comparisons():
     logger = logging.getLogger(__name__)
 
     # Load counts dataset
-    df = pd.read_csv(COUNTS_CSV['counts'])
-    df_ = df[df['class'].isin(CLASSES)].reset_index(drop=True)
+    data = {}
+    data['camera'] = pd.read_csv(COUNTS_CSV['counts'])
+    data['classifier'] = pd.read_csv(COUNTS_CSV['counts-v9'])
 
-    data = df_.copy() if FILTER_CLASSES_FLAG else df.copy()
-    logger.info('Dataset size: {}'.format(data.shape[0]))
-    logger.info('Total dates: {}'.format(data['datetime'].nunique()))
-    logger.info('Total classes: {}\n'.format(data['class'].nunique()))
+    def filter_classes(df, classes):
+        return df[df['class'].isin(classes)].reset_index(drop=True)
+
+    if FILTER_CLASSES_FLAG:
+        logger.info('FILTER CLASSES: {}'.format(FILTER_CLASSES_FLAG))
+        classes = CORRELATED_CLASSES if CORRELATED_CLASSES_FLAG else CLASSES
+        logger.info('CORRELATED CLASSES: {}'.format(CORRELATED_CLASSES_FLAG))
+        data['camera'] = filter_classes(data['camera'], classes)
+        data['classifier'] = filter_classes(data['classifier'], classes)
+
+    data_ = data['camera']
+    logger.info('Dataset size: {}'.format(data_.shape[0]))
+    logger.info('Total dates: {}'.format(data_['datetime'].nunique()))
+    logger.info('Total classes: {}\n'.format(data_['class'].nunique()))
 
     # Initialize stats to compute
     if COMPARE_ALL_FLAG:
         error_stats = ERROR_STATS
         agreement_stats = AGREEMENT_STATS
     else:
-        error_stats = []
-        agreement_stats = []
+        error_stats = [mase]
+        agreement_stats = [pearson]
 
     logger.info(
         f'Error Metric Comparisons to Make\n{[st.__name__ for st in error_stats]}')
@@ -51,19 +79,31 @@ def run_comparisons():
     agreement_scores = compare_metrics(agreement_stats, data=data)
 
     Logger.section_break("Overall")
+    grp_err = error_scores.groupby("stat")
+    grp_aggr = agreement_scores.groupby("stat")
     pd.options.display.float_format = '{:,.2f}'.format
     with pd.option_context('display.max_rows', None,
                            'display.max_columns', None,
                            'display.max_colwidth', -1):
-        cameras = ['setting 1', 'setting 2', 'setting 3']
-        classifier = ['lab', 'pier']
+        cameras = ['lab - micro', 'pier - micro', 'pier - lab']
+        classifier = ['clssf lab', 'clssf pier']
+        Logger.section_break('Avg scores')
         logger.info(f'Camera Counts\n{"-" * 30}')
-        logger.info(f'\n{error_scores.groupby("stat")[cameras].mean().T}')
-        logger.info(f'\n{agreement_scores.groupby("stat")[cameras].mean().T}')
+        logger.info(f'{grp_err[cameras].mean().T}')
+        logger.info(f'\n{grp_aggr[cameras].mean().T}\n')
 
         logger.info(f'Classifier Counts\n{"-" * 30}')
-        logger.info(f'\n{error_scores.groupby("stat")[classifier].mean().T}')
-        logger.info(f'\n{agreement_scores.groupby("stat")[classifier].mean().T}')
+        logger.info(f'{grp_err[classifier].mean().T}')
+        logger.info(f'\n{grp_aggr[classifier].mean().T}\n')
+
+        Logger.section_break('Median scores')
+        logger.info(f'Camera Counts\n{"-" * 30}')
+        logger.info(f'{grp_err[cameras].median().T}')
+        logger.info(f'\n{grp_aggr[cameras].median().T}\n')
+
+        logger.info(f'Classifier Counts\n{"-" * 30}')
+        logger.info(f'{grp_err[classifier].median().T}')
+        logger.info(f'\n{grp_aggr[classifier].median().T}\n')
 
     return error_scores, agreement_scores
 
@@ -84,31 +124,40 @@ def compare_metrics(stats, data, plot=True, verbose=False):
     settings = set_settings(rc_counts)
 
     # === Set classifier gtruth vs predictions
-    grouping = 'datetime'
-    grouped_data = data.groupby(grouping)
+    grouping = 'class'
+    data['camera-grp'] = data['camera'].groupby(grouping)
+    data['classifier-grp'] = data['classifier'].groupby(grouping)
+
     stat_dict = {}
     for stat in stats:
-        columns = ['class', 'setting 1', 'setting 2', 'setting 3', 'lab', 'pier']
+        columns = ['class', 'lab - micro', 'pier - micro', 'pier - lab', 'clssf lab',
+                   'clssf pier']
         stat_df = pd.DataFrame(columns=columns)
         class_scores = defaultdict(dict)
         Logger.section_break(stat.__name__, log_level=10)
+
+        grouped_data = data['camera-grp']
         for idx, (grp_name, grp_data) in enumerate(grouped_data):
             logger.debug('\n\n\nGrouping: {}\nStat: {}'.format(grp_name, stat.__name__))
 
+            # Evaluate camera counts
             camera_scores = evaluate_settings(settings, stat, grp_data,
                                               do_bootstrap=False)
 
-            classifier_scores = evaluate_classifier_counts(stat, grp_data)
+            # Evaluate classifier counts
+            grp_data_ = data['classifier-grp'].get_group(grp_name)
+            classifier_scores = evaluate_classifier_counts(stat, grp_data_)
             logger.debug('\n')
 
-            data = [grp_name] + camera_scores + classifier_scores
-            data = dict(zip(columns, data))
-            stat_df = stat_df.append(data, ignore_index=True)
+            score_data = [grp_name] + camera_scores + classifier_scores
+            score_data = dict(zip(columns, score_data))
+            stat_df = stat_df.append(score_data, ignore_index=True)
         stat_dict[stat.__name__] = stat_df
 
     Logger.section_break('Summary')
     main_df = pd.DataFrame()
     for stat, score_df in stat_dict.items():
+        score_df = score_df.replace([np.inf, -np.inf], np.nan)
         print_metric(stat, score_df, verbose=verbose)
 
         score_df['stat'] = stat
@@ -123,7 +172,7 @@ def compare_metrics(stats, data, plot=True, verbose=False):
 
 def evaluate_classifier_counts(stat, data):
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     # === Set classifier gtruth vs predictions
     cameras = ['lab', 'pier']
@@ -133,8 +182,9 @@ def evaluate_classifier_counts(stat, data):
     logger.debug(f'{"-" * 70}')
     for cam in cameras:
         gtruth, pred = f'{cam} gtruth raw count', f'{cam} predicted raw count'
+        n = data[f'{cam} gtruth raw count'].sum() if stat.__name__ == 'mae' else None
         scores[(gtruth, pred)] = evaluate_counts(stat=stat, data=data, gtruth=gtruth,
-                                                 pred=pred)
+                                                 pred=pred, n=n)
         logger.debug('{:25} {:25} {}'.format(pred, gtruth, scores[(gtruth, pred)]))
     return list(scores.values())
 
@@ -153,6 +203,7 @@ def print_metric(stat, score_df, verbose=False):
             logger.info(scores)
         else:
             logger.info('\nAvg Score\n{}\n{}'.format("-" * 15, scores.loc['mean']))
+            logger.info('\nMedian Score\n{}\n{}'.format("-" * 15, scores.loc['50%']))
 
 
 if __name__ == '__main__':
@@ -163,7 +214,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Initialize logger
-    log_fname = os.path.join(args.input_dir, 'eval_error_metric.log')
+    log_fname = os.path.join(args.input_dir, 'eval_error_metric-correlated_cls_only.log')
     Logger(log_fname, logging.INFO, log2file=False)
     Logger.section_break('Error/Agreement Comparison')
 

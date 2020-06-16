@@ -9,53 +9,48 @@
 """
 import logging
 import os
+import warnings
 from collections import defaultdict
 
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 import pandas as pd
+import numpy as np
 
 from get_counts import transpose_labels, reformat_counts
 from utils.logger import Logger
-from validate_exp.v_utils import smape, set_counts
+from validate_exp.v_utils import set_counts
+from validate_exp.stat_fns import mase
+from counts_analysis.c_utils import COUNTS_CSV, IMG_CSV, CLASSES, CORRELATED_CLASSES
 
+FILTER_CLASSES_FLAG = True
+CORRELATED_CLASSES_FLAG = True
+CELLS_1000_FLAG = False
+
+# Initialize logger
 GT_ROOT_DIR = '/data6/phytoplankton-db'
-# To update the model, change this directory
-MODEL_DIR = '/data6/lekevin/hab-master/hab_ml/experiments/resnet18_pretrained_c34_workshop2019_2'
-
-## INPUT FILES
-VALID_DATES = f'{GT_ROOT_DIR}/valid_collection_dates_master.txt'
-SAMPLE_METHODS_CSV = {
-    # 'lab': f'{GT_ROOT_DIR}/csv/hab_in_vitro_summer2019.csv',
-    ## 'micro': f'{ROOT_DIR}/csv/hab_micro_2017_2019.csv',
-    # 'micro': f'{GT_ROOT_DIR}/csv/hab_micro_summer2019.csv', # Prorocentrum micans included
-    # 'pier': f'{GT_ROOT_DIR}/csv/hab_in_situ_summer2019.csv',
-
-    'lab': f'{MODEL_DIR}/hab_in_vitro_summer2019-predictions.csv',
-    'micro': f'{GT_ROOT_DIR}/csv/hab_micro_2017_2019.csv',
-    # 'micro': f'{GT_ROOT_DIR}/csv/hab_micro_summer2019.csv',
-    # Prorocentrum micans included
-    'pier': f'{MODEL_DIR}/hab_in_situ_summer2019-predictions.csv',
-
-    'counts': '/data6/phytoplankton-db/counts/master_counts_v6.csv',
-}
-
-# Classes
-classes = ['Akashiwo',
-           'Ceratium falcatiforme or fusus',
-           'Ceratium furca',
-           'Chattonella',
-           'Cochlodinium',
-           'Lingulodinium polyedra',
-           'Prorocentrum micans']
-
-TIME_WINDOWS = [5, 10, 50, 100, 200, 500, 750, 1000, 1200, 1500, 1750, 2000]
-
 log_fname = os.path.join(f'{GT_ROOT_DIR}/counts', 'get_tw_counts.log')
 Logger(log_fname, logging.INFO, log2file=False)
 Logger.section_break('Create COUNTS CSV')
 logger = logging.getLogger('create-csv')
 
 
+def normalize_imaged_volume(data, sample_method):
+    normalization_factor = 60
+    data[f'{sample_method} gtruth cells/mL'] = data[
+                                                   f'{sample_method} gtruth raw count'] / normalization_factor
+    return data
+
+
+def normalize_raw_count(data, sample_method):
+    normalization_factor = 1
+    data[f'{sample_method} gtruth nrmlzd raw count'] = data[f'{sample_method} gtruth ' \
+                                                            f'raw count'] / normalization_factor
+    return data
+
+
 def get_time_window_pier_data(datetime_dict, data, time_col='image_time'):
+    """Get time windows within the pier dataset"""
     time_window_df = pd.DataFrame()
     data[time_col] = pd.to_datetime(data[time_col]).dt.strftime("%H:%M:%S")
     for date, date_df in data.groupby('image_date'):
@@ -71,17 +66,13 @@ def get_time_window_pier_data(datetime_dict, data, time_col='image_time'):
         time_window_df = time_window_df.append(df)
 
     time_window_df = transpose_labels(time_window_df)
+
+    time_window_df = normalize_imaged_volume(time_window_df, sample_method='pier')
+    time_window_df = normalize_raw_count(time_window_df, sample_method='pier')
     return time_window_df
 
-
-# ACTUAL CODE TO GET PLOT SCORES
-data = pd.read_csv(SAMPLE_METHODS_CSV['counts'])
-# data = data[data['class'].isin(classes)].reset_index(drop=True)
-data_ = data[[col for col in data.columns if 'pier' not in col]]
-raw_counts = set_counts('gtruth', 'raw count', micro_default=True)
-
-
 def set_time_windows(time_window, data, time_col='sampling time'):
+    """Define the offsets of the time windows"""
     smpl_datetime = data[[time_col, 'datetime']]
     smpl_datetime[time_col] = pd.to_datetime(smpl_datetime[time_col], format="%H:%M")
     offset = pd.DateOffset(seconds=time_window)
@@ -93,8 +84,27 @@ def set_time_windows(time_window, data, time_col='sampling time'):
     return smpl_datetime
 
 
-pier_data = pd.read_csv(SAMPLE_METHODS_CSV['pier'])
+# ACTUAL CODE TO GET PLOT SCORES
+data = pd.read_csv(COUNTS_CSV['counts'])
 
+
+def filter_classes(df, classes):
+    return df[df['class'].isin(classes)].reset_index(drop=True)
+
+
+if FILTER_CLASSES_FLAG:
+    logger.info('FILTER CLASSES: {}'.format(FILTER_CLASSES_FLAG))
+    classes = CORRELATED_CLASSES if CORRELATED_CLASSES_FLAG else CLASSES
+    logger.info('CORRELATED CLASSES: {}'.format(CORRELATED_CLASSES_FLAG))
+    data = filter_classes(data, classes)
+
+data_ = data[[col for col in data.columns if 'pier' not in col]]
+raw_counts = set_counts('gtruth', 'raw count', micro_default=True)
+
+pier_data = pd.read_csv(IMG_CSV['pier-pred'])
+TIME_WINDOWS = [5, 10, 50, 100, 200, 500, 750, 1000, 1200, 1500, 1750, 2000]
+
+# Run through micro, then lab
 for i in raw_counts[:2]:
     plot_scores = defaultdict(list)
     for t_win in TIME_WINDOWS:
@@ -103,9 +113,24 @@ for i in raw_counts[:2]:
 
         data_t_win_pier = get_time_window_pier_data(smpl_datetime, pier_data)
         data_t_win = data_t_win_pier.merge(data_, on=['datetime', 'class'])
-        x, y = data_t_win[i], data_t_win[raw_counts[2]]
+
+        if CELLS_1000_FLAG:
+            # Save data
+            fname = '/data6/phytoplankton-db/counts/master_counts-pier1000s.csv'
+            data_t_win.to_csv(fname, index=False)
+
 
         # Save data
-        plot_scores['smape'].append(smape(x, y))
+        # Calculate MASE over here (median over each class)
+        def evaluate_stat_over_each_class(x, y, data, stat, grouping='class'):
+            score = []
+            for grp_name, grp_data in data.groupby(grouping):
+                score.append(stat(grp_data[x], grp_data[y]))
+            return np.median(score)
+
+
+        score = evaluate_stat_over_each_class(x=i, y=raw_counts[2], data=data_t_win,
+                                              stat=mase)
+        plot_scores['mase'].append(score)
         plot_scores['time'].append(t_win)
     logger.info(plot_scores)

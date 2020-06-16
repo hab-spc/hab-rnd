@@ -19,68 +19,145 @@ from scipy import stats
 
 # Project level imports
 from validate_exp.stat_fns import concordance_correlation_coefficient, kl_divergence, \
-    smape
+    smape, mase
 from validate_exp.v_utils import set_counts, get_confidence_limit
+from counts_analysis.c_utils import CLASSES, set_counts, set_settings, \
+    CORRELATED_CLASSES
 from hab_ml.utils.logger import Logger
 
-COUNTS_CSV = 'master_counts_v7.csv'
+FILTER_CLASSES_FLAG = True
+CORRELATED_CLASSES_FLAG = False
 
 
-def main(args):
-    # Excluded 3 classes atm
-    classes = ['Akashiwo',
-               'Ceratium falcatiforme or fusus',
-               'Ceratium furca',
-               'Chattonella',
-               'Cochlodinium',
-               'Lingulodinium polyedra',
-               'Prorocentrum micans']
-
-    # classes = ['Akashiwo',
-    #  'Ceratium falcatiforme or fusus',
-    #  'Ceratium furca',
-    #  'Chattonella',
-    #  'Cochlodinium',
-    #  'Gyrodinium',
-    #  'Lingulodinium polyedra',
-    #  'Prorocentrum micans',
-    #  'Pseudo-nitzschia chain']
-
-    # Initialize logging
-    input_dir = args.input_dir
-    log_fname = os.path.join(input_dir, 'eval_counts.log')
-    Logger(log_fname, logging.INFO, log2file=False)
-    Logger.section_break('Create EVAL CSV')
+def main():
     logger = logging.getLogger('create-csv')
 
     COUNT = 'cells/mL'
     logger.info('Count form: {}'.format(COUNT))
 
-    # Load count dataset
-    df = pd.read_csv(os.path.join(input_dir, COUNTS_CSV))
-
-    logger.info('Dataset size: {}'.format(df.shape[0]))
-    logger.info('Total dates: {}'.format(df['datetime'].nunique()))
-    logger.info('Total classes: {}\n'.format(df['class'].nunique()))
-
     # Set count forms
     volumetric_counts = set_counts('gtruth', 'cells/mL', micro_default=True)
     rc_counts = set_counts('gtruth', 'raw count', micro_default=True)
+    rc_counts_pred = set_counts('predicted', 'raw count', micro_default=True)
     nrmlzd_counts = set_counts('gtruth', 'nrmlzd raw count', micro_default=True)
     rel_counts = set_counts('gtruth', 'relative abundance', micro_default=False)
     rel_counts = ['micro cells/mL relative abundance'] + list(rel_counts[1:])
 
     # Set settings
-    counts = nrmlzd_counts
-    score_settings = {'micro-lab': (counts[0], counts[1]),
-                      'micro-pier': (counts[0], counts[2]),
-                      'lab-pier': (counts[1], counts[2])}
+    settings_ = [set_settings(count) for count in [volumetric_counts, rc_counts,
+                                                   nrmlzd_counts, rel_counts,
+                                                   rc_counts_pred]]
+    count_forms = dict(zip(['volumetric', 'raw', 'nrmlzd', 'relative', 'predicted raw'],
+                           settings_))
 
-    # Stat
-    stat = smape
+    # Set evaluation metric
+    stat = mase
 
-    # Evalute counts
-    evaluate_settings(score_settings, stat, df, classes)
+    # Load count dataset
+    count_version = 'counts_v10'
+    high = '/data6/phytoplankton-db/counts/master_counts_v8.csv'
+    df = pd.read_csv(high)
+    if count_version.split('_')[1] == 'v10':
+        logger.info('V10> detected. Filtering for HAB classes')
+        df = df[df['class'] != "Other"].reset_index(drop=True)
+
+    def filter_classes(df, classes):
+        return df[df['class'].isin(classes)].reset_index(drop=True)
+
+    if FILTER_CLASSES_FLAG:
+        logger.info('FILTER CLASSES: {}'.format(FILTER_CLASSES_FLAG))
+        classes = CORRELATED_CLASSES if CORRELATED_CLASSES_FLAG else CLASSES
+        logger.info('CORRELATED CLASSES: {}'.format(CORRELATED_CLASSES_FLAG))
+        df = filter_classes(df, classes)
+
+    def compute_relative_abundance(raw_count, data):
+        if 'micro' in raw_count:
+            relative_column = 'micro cells/mL relative abundance'
+        else:
+            relative_column = f'{raw_count.split()[0]} {raw_count.split()[1]} relative abundance'
+        # Compute relative abundance
+        data[relative_column] = data.groupby('datetime')[raw_count].apply(
+            lambda x: x / x.sum() if sum(x) != 0 else x)
+        return data
+
+    # for rc in rc_counts:
+    #     df = compute_relative_abundance(rc, df)
+
+    logger.info('Dataset size: {}'.format(df.shape[0]))
+    logger.info('Total dates: {}'.format(df['datetime'].nunique()))
+    logger.info('Total classes: {}\n'.format(df['class'].nunique()))
+
+    # Evaluate count forms
+    settings_score = compare_count_forms(count_forms, stat, df)
+    Logger.section_break("Overall")
+    grp_scores = settings_score.groupby('count form')
+    settings = ['lab - micro', 'pier - micro', 'pier - lab']
+    pd.options.display.float_format = '{:,.2f}'.format
+    with pd.option_context('display.max_rows', None,
+                           'display.max_columns', None,
+                           'display.max_colwidth', -1):
+        logger.info(f'Average Scores\n{"-" * 30}')
+        logger.info(f'{grp_scores[settings].mean().T}')
+
+        logger.info(f'Median Scores\n{"-" * 30}')
+        logger.info(f'{grp_scores[settings].median().T}')
+
+        logger.info(f'Confidence Limits\n{"-" * 30}')
+        for grp_name, grp_df in grp_scores:
+            logger.info(grp_name)
+            for setting in settings:
+                logger.info('{} {:.1f} confidence interval {:.2f}% and {:.2f}%'.
+                            format(setting, *get_confidence_limit(grp_df[setting])))
+
+    return settings_score
+
+
+def compare_count_forms(count_forms, stat, data):
+    logger = logging.getLogger(__name__)
+
+    # Define grouping (classes/datetime)
+    grouping = 'class'
+    logger.info('Grouping: {}'.format(grouping.upper()))
+    grouped_data = data.groupby(grouping)
+
+    stat_dict = {}
+    for count_form, settings in count_forms.items():
+
+        columns = ['class', 'lab - micro', 'pier - micro', 'pier - lab']
+        stat_df = pd.DataFrame(columns=columns)
+
+        for idx, (grp_name, grp_data) in enumerate(grouped_data):
+
+            # Evalute settings for this grouping
+            if count_form == 'raw count' and grp_name == 'Ceratium furca':
+                print('debugging')
+
+            # Get scores for each setting
+            camera_scores = evaluate_settings(settings, stat, grp_data,
+                                              do_bootstrap=False)
+
+            # Save scores (class, score set1, score set2, score set3) format
+            score_data = dict(zip(columns, [grp_name] + camera_scores))
+            stat_df = stat_df.append(score_data, ignore_index=True)
+        # Save dataframe for each count form into dictionary
+        stat_df = stat_df.replace([np.inf, -np.inf], np.nan)
+        stat_dict[count_form] = stat_df
+
+    # Print stat dictionary for each count form (class scores for each setting)
+    # then return the stat dictionary as a dataframe
+    Logger.section_break('Summary')
+    main_df = pd.DataFrame()
+    for count_form, score_df in stat_dict.items():
+        print_metric(count_form, score_df, verbose=False)
+
+        score_df['count form'] = count_form
+        main_df = main_df.append(score_df)
+    logger.info('\n')
+
+    cols = list(main_df.columns)
+    cols.insert(1, cols.pop())
+    main_df = main_df[cols].reset_index(drop=True)
+    return main_df
 
 
 def evaluate_settings(settings, stat, df, classes=None, do_bootstrap=True):
@@ -98,7 +175,7 @@ def evaluate_settings(settings, stat, df, classes=None, do_bootstrap=True):
     Returns:
 
     """
-    logger = logging.getLogger('test')
+    logger = logging.getLogger(__name__)
     logger.setLevel(logging.CRITICAL)
 
     if classes:
@@ -120,15 +197,15 @@ def evaluate_settings(settings, stat, df, classes=None, do_bootstrap=True):
         booted_eval_metrics = {}
         for stat in [smape, concordance_correlation_coefficient]:
             logger.info(stat.__name__)
-            for (gtruth, pred), setting_lbl in score_settings.items():
-                booted_eval_metrics[setting_lbl] = bootstrap(x=gtruth, y=pred,
-                                                             stats=stat, data=df)
+            for setting, (gtruth, pred) in settings.items():
+                booted_eval_metrics[setting] = bootstrap(x=gtruth, y=pred,
+                                                         stats=stat, data=df)
             print_eval_bootstrap(**booted_eval_metrics)
 
     return list(scores.values())
 
 
-def evaluate_counts(data, gtruth, pred, stat):
+def evaluate_counts(data, gtruth, pred, stat, n=None):
     """ Evaluates a setting and save it for plotting
 
     Args:
@@ -143,7 +220,7 @@ def evaluate_counts(data, gtruth, pred, stat):
     logger.setLevel(logging.DEBUG)
 
     x, y = data[gtruth], data[pred]
-    score = stat(x, y)
+    score = stat(x, y, n=n) if n else stat(x, y)
 
     if not isinstance(score, float):
         score = score[0]
@@ -292,10 +369,34 @@ def bootstrap(x, y, data, stats, n_iterations=10000):
     return score
 
 
+def print_metric(stat, score_df, verbose=False):
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    logger.info(f'\n\n#======== {stat.upper()} ========#\n{"-" * 40}')
+    pd.options.display.float_format = '{:,.2f}'.format
+    with pd.option_context('display.max_rows', None,
+                           'display.max_columns', None,
+                           'display.max_colwidth', -1):
+        logger.info(f'\n{score_df}')
+        scores = score_df[score_df.columns[1:]].describe()
+        if verbose:
+            logger.info(scores)
+        else:
+            logger.info('\nAvg Score\n{}\n{}'.format("-" * 15, scores.loc['mean']))
+            logger.info('\nMedian Score\n{}\n{}'.format("-" * 15, scores.loc['50%']))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluate Counts')
     parser.add_argument('--input_dir', type=str,
                         default='/data6/phytoplankton-db/counts/',
                         help='Count data directory to evaluate counts from')
     args = parser.parse_args()
-    main(args)
+
+    # Initialize logging
+    input_dir = args.input_dir
+    log_fname = os.path.join(input_dir, 'eval_counts.log')
+    Logger(log_fname, logging.INFO, log2file=False)
+    Logger.section_break('Create EVAL CSV')
+
+    main()

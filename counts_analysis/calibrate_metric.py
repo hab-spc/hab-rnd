@@ -11,7 +11,7 @@ HAB_ONLY_FLAG = False
 DEBUG = False
 SAVE = False
 scores = defaultdict(list)
-datasets = ['lab', 'pier']
+datasets = ['pier', 'lab']
 for cam in datasets:
     img_df = pd.read_csv(IMG_CSV[f'{cam}-pred'])
     grouped_df = img_df.groupby('image_date')
@@ -23,7 +23,6 @@ for cam in datasets:
 
     def error(accuracy):
         return 1.0 - accuracy
-
 
     # read in image dataset and get all accuracies (lab and pier)
     data_counts = defaultdict(dict)
@@ -37,7 +36,7 @@ for cam in datasets:
         scores['datetime'].append(grp_name)
 
     # read in counts dataset and get all MASE / WAPE
-    counts_df = pd.read_csv(COUNTS_CSV['counts'])
+    counts_df = pd.read_csv(COUNTS_CSV['counts-v9'])
     grouped_df = counts_df.groupby('datetime')
     data_counts = defaultdict(dict)
     if DEBUG:
@@ -55,7 +54,9 @@ for cam in datasets:
     for grp_name, grp_df in grouped_df:
         gtruth, pred = grp_df[f'{cam} gtruth raw count'], grp_df[f'{cam} predicted raw ' \
                                                                  f'count']
+        n = gtruth.sum()
 
+        scores['mae'].append(mean_absolute_error(gtruth, pred))
         scores['wape'].append(wape(gtruth, pred))
         scores['mase'].append(mase(gtruth, pred))
         scores['smape'].append(smape(gtruth, pred))
@@ -66,16 +67,20 @@ scores_df = pd.DataFrame(scores)
 scores_df = scores_df.sort_values('error')
 if SAVE:
     filename = '/data6/lekevin/hab-master/phytoplankton-db/counts/' \
-               'calibration_scores-no-other.csv'
+               'calibration_scores.csv'
     scores_df.to_csv(filename, index=False)
 
 # scores_df[['error', 'mase']].plot(kind='scatter', x='error', y='mase')
 
-metrics_to_compare = ['smape', 'wape', 'mase']
+from validate_exp.v_utils import best_fit
+
+metrics_to_compare = ['mae', 'smape', 'wape', 'mase']
 for y in metrics_to_compare:
+    print()
+
     sns.scatterplot(x='error', y=y, data=scores_df, hue='camera')
-    # Xfit, Yfit = best_fit(scores_df['error'], scores_df[y], verbose=False)
-    # plt.plot(Xfit, Yfit, color='orange')
+    Xfit, Yfit = best_fit(scores_df['error'], scores_df[y], verbose=True)
+    plt.plot(Xfit, Yfit, color='green')
     plt.title(f'Calibration Plot: Error vs {y.upper()}')
     # if y != 'smape':
     #     plt.yscale('log')

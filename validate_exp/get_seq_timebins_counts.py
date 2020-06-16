@@ -9,43 +9,22 @@
 """
 import logging
 import os
+import warnings
 from collections import defaultdict
 
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
+import numpy as np
 import pandas as pd
 
 from get_counts import transpose_labels, reformat_counts
 from utils.logger import Logger
-from validate_exp.v_utils import smape, set_counts
+from validate_exp.v_utils import set_counts
+from validate_exp.stat_fns import mase
+from counts_analysis.c_utils import IMG_CSV, COUNTS_CSV, CLASSES
 
 GT_ROOT_DIR = '/data6/phytoplankton-db'
-# To update the model, change this directory
-MODEL_DIR = '/data6/lekevin/hab-master/hab_ml/experiments/resnet18_pretrained_c34_workshop2019_2'
-
-## INPUT FILES
-VALID_DATES = f'{GT_ROOT_DIR}/valid_collection_dates_master.txt'
-SAMPLE_METHODS_CSV = {
-    # 'lab': f'{GT_ROOT_DIR}/csv/hab_in_vitro_summer2019.csv',
-    ## 'micro': f'{ROOT_DIR}/csv/hab_micro_2017_2019.csv',
-    # 'micro': f'{GT_ROOT_DIR}/csv/hab_micro_summer2019.csv', # Prorocentrum micans included
-    # 'pier': f'{GT_ROOT_DIR}/csv/hab_in_situ_summer2019.csv',
-
-    'lab': f'{MODEL_DIR}/hab_in_vitro_summer2019-predictions.csv',
-    'micro': f'{GT_ROOT_DIR}/csv/hab_micro_2017_2019.csv',
-    # 'micro': f'{GT_ROOT_DIR}/csv/hab_micro_summer2019.csv',
-    # Prorocentrum micans included
-    'pier': f'{MODEL_DIR}/hab_in_situ_summer2019-predictions.csv',
-
-    'counts': '/data6/phytoplankton-db/counts/master_counts_v7.csv',
-}
-
-# Classes
-classes = ['Akashiwo',
-           'Ceratium falcatiforme or fusus',
-           'Ceratium furca',
-           'Chattonella',
-           'Cochlodinium',
-           'Lingulodinium polyedra',
-           'Prorocentrum micans']
+FILTER_CLASSES_FLAG = False
 
 TIME_WINDOWS = [5, 10, 50, 100, 200, 500, 750, 1000]
 
@@ -75,8 +54,15 @@ def get_time_bins_lab_data(datetime_dict, data, time_col='image_time'):
 
 
 # ACTUAL CODE TO GET PLOT SCORES
-data = pd.read_csv(SAMPLE_METHODS_CSV['counts'])
-# data = data[data['class'].isin(classes)].reset_index(drop=True)
+data = pd.read_csv(COUNTS_CSV['counts'])
+
+
+def filter_classes(df): return df[df['class'].isin(CLASSES)].reset_index(drop=True)
+
+
+if FILTER_CLASSES_FLAG:
+    logger.info('FILTER CLASSES: {}'.format(FILTER_CLASSES_FLAG))
+    data = filter_classes(data)
 data_ = data[[col for col in data.columns if 'lab' not in col]]
 raw_counts = set_counts('gtruth', 'raw count', micro_default=True)
 
@@ -95,7 +81,7 @@ def set_time_bins(time_window, data, time_col='image_time'):
     return smpl_datetime
 
 
-lab_data = pd.read_csv(SAMPLE_METHODS_CSV['lab'])
+lab_data = pd.read_csv(IMG_CSV['lab-pred'])
 
 x_col, y_col = raw_counts[0], raw_counts[1]
 plot_scores = defaultdict(list)
@@ -107,7 +93,19 @@ for t_win in TIME_WINDOWS:
     data_t_bin = data_t_bin_lab.merge(data_, on=['datetime', 'class'])
     x, y = data_t_bin[x_col], data_t_bin[y_col]
 
+
+    # Calculate MASE over here (median over each class)
+    def evaluate_stat_over_each_class(x, y, data, stat, grouping='class'):
+        score = []
+        for grp_name, grp_data in data.groupby(grouping):
+            score.append(stat(grp_data[x], grp_data[y]))
+        return np.median(score)
+
+
+    score = evaluate_stat_over_each_class(x=x_col, y=y_col, data=data_t_bin,
+                                          stat=mase)
+
     # Save data
-    plot_scores['smape'].append(smape(x, y))
+    plot_scores['mase'].append(score)
     plot_scores['time'].append(t_win)
 logger.info(plot_scores)

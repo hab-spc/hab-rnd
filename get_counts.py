@@ -30,11 +30,13 @@ from data.label_encoder import HABLblEncoder
 from utils.constants import Constants as CONST
 from utils.logger import Logger
 
+HAB_ONLY = True
 
 GT_ROOT_DIR = '/data6/phytoplankton-db'
 # To update the model, change this directory
 # MODEL_DIR = '/data6/lekevin/hab-master/hab_ml/experiments/resnet18_pretrained_c34_workshop2019_2'
 MODEL_DIR = '/data6/yuanzhouyuan/hab/hab-ml/experiments/baseline_new_weighted_loss'
+CV_MODEL_DIR = '/data6/phytoplankton-db/models'
 
 ## INPUT FILES
 VALID_DATES = f'{GT_ROOT_DIR}/valid_collection_dates_master.txt'
@@ -44,18 +46,24 @@ SAMPLE_METHODS_CSV = {
     # 'micro': f'{GT_ROOT_DIR}/csv/hab_micro_summer2019.csv', # Prorocentrum micans included
     # 'pier': f'{GT_ROOT_DIR}/csv/hab_in_situ_summer2019.csv',
 
-    'lab': f'{MODEL_DIR}/hab_in_vitro_summer2019-predictions.csv',
-    'micro': f'{GT_ROOT_DIR}/csv/hab_micro_2017_2019.csv',
+    # 'lab': f'{MODEL_DIR}/hab_in_vitro_summer2019-predictions.csv',
     # 'micro': f'{GT_ROOT_DIR}/csv/hab_micro_summer2019.csv',
     # Prorocentrum micans included
-    'pier': f'{MODEL_DIR}/hab_in_situ_summer2019-predictions.csv',
+    # 'pier': f'{MODEL_DIR}/hab_in_situ_summer2019-predictions.csv',
+
+    'lab': f'{CV_MODEL_DIR}/cv_hab_in_vitro_summer2019-predictions.csv',
+    'pier': f'{CV_MODEL_DIR}/cv_hab_in_situ_summer2019-predictions.csv',
+    'micro': f'{GT_ROOT_DIR}/csv/hab_micro_2017_2019.csv',
 }
 
 ## OUTPUT FILES
-VERSION = 'v8'
+# v9 --other
+VERSION = 'v11'
 COUNTS_CSV = {
     'plot_format': 'master_counts_{version}-plot.csv'.format(version=VERSION),
-    'master_format': 'master_counts_{version}.csv'.format(version=VERSION)}
+    'other_format': 'master_counts_{version}-other.csv'.format(version=VERSION),
+    'master_format': 'master_counts_{version}.csv'.format(version=VERSION)
+}
 
 
 def main(args):
@@ -89,7 +97,8 @@ def main(args):
         else:
             # second sampling case micro
             if sample_method != 'pier':
-                counts_df = counts_df.merge(smpl_counts, on=['datetime', 'class'])
+                counts_df = counts_df.merge(smpl_counts, on=['datetime', 'class'],
+                                            how='outer')
                 counts_df = counts_df.rename({'label_x': 'label'}, axis=1)
                 counts_df = counts_df.drop('label_y', axis=1)
             else:
@@ -98,20 +107,28 @@ def main(args):
 
     counts_df = counts_df[counts_df['datetime'].isin(valid_dates)]
 
-    # HACKEY fix
-    # counts_df['sampling time'] = (pd.to_datetime(counts_df['sampling time'],
-    #                                              format='%H:%M') + pd.DateOffset(hours=1)).dt.time
-
     logger.info('Counts successfully concatenated')
     csv_fname = os.path.join(output_dir, COUNTS_CSV['plot_format'])
     logger.info(f'Saving -plot version as {csv_fname}')
     counts_df.to_csv(csv_fname, index=False)
 
-    csv_fname = os.path.join(output_dir, COUNTS_CSV['master_format'])
     logger.info('\nReformatting counts for error/agreement...')
     counts_eval_df = transpose_labels(counts_df, sort=True)
+
+    if not HAB_ONLY:
+        csv_fname = os.path.join(output_dir, COUNTS_CSV['other_format'])
+        logger.info(f'Saving -master -other version as {csv_fname}')
+        counts_eval_df.to_csv(csv_fname, index=False)
+
+        logger.info('\nFiltering "Other" out of dataset...')
+        counts_eval_df = counts_eval_df[counts_eval_df['class'] != "Other"].reset_index(
+            drop=True)
+
+    csv_fname = os.path.join(output_dir, COUNTS_CSV['master_format'])
     logger.info(f'Saving -master version as {csv_fname}')
     counts_eval_df.to_csv(csv_fname, index=False)
+
+
 
 def get_counts(input_csv=None, input_dir=None, output_dir=None, sample_method='micro', eval=False):
     """ Reformat predictions into a count csv file or conduct evaluation
@@ -125,20 +142,24 @@ def get_counts(input_csv=None, input_dir=None, output_dir=None, sample_method='m
     Returns:
 
     """
-    def pivot_counts_table(data, le, label_col='label'):
+
+    def pivot_counts_table(data, le, label_col='label', hab_only=HAB_ONLY):
         # filter for only hab species
         data['class'] = data[label_col].apply(le.hab_map)
-        data = data[data['class'].isin(le.hab_classes[:-1])]
+        if hab_only:
+            data = data[data['class'].isin(le.hab_classes[:-1])]
         # pivot the data
         df = pd.pivot_table(data, values=label_col, aggfunc='count', index=['class'])
         df['class'] = df.index
         df = df.rename({label_col: f'{sample_method} raw count'}, axis=1)
         # set classes not found to raw count of 0
-        classes_not_found = list(set(le.hab_classes[:-1]).difference(df['class'].unique()))
+        classes_not_found = list(
+            set(le.hab_classes[:-1]).difference(df['class'].unique()))
         logger.debug('Classes not found: {}'.format(classes_not_found))
         if classes_not_found:
             for cls in classes_not_found:
-                df = df.append({'class': cls, f'{sample_method} raw count': 0}, ignore_index=True)
+                df = df.append({'class': cls, f'{sample_method} raw count': 0},
+                               ignore_index=True)
 
         df['label'] = 'gtruth' if label_col == 'label' else 'prediction'
         # compute total abundance
@@ -160,6 +181,7 @@ def get_counts(input_csv=None, input_dir=None, output_dir=None, sample_method='m
     logger.info('Sampling method: {}'.format(sample_method))
     logger.info('Data loaded from {}'.format(input_csv))
 
+    # TODO take out the read csv and take in the actual dataframe ???
     df = pd.read_csv(input_csv)
 
     # reformat dataframe
@@ -284,7 +306,6 @@ def normalize_imaged_volume(data, sample_method):
     data[f'{sample_method} cells/mL'] = data[
                                             f'{sample_method} raw count'] / normalization_factor
     return data
-
 
 def normalize_raw_count(data, sample_method):
     normalization_factor = 1

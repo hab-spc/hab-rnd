@@ -5,11 +5,22 @@ from scipy.stats import entropy
 from sklearn.metrics import mean_absolute_error
 
 
-def smape(y_true, y_pred):
+def mae(x, y, n=None):
+    if n:
+        return 1 / n * np.sum(np.abs(x - y))
+    else:
+        return np.mean(np.abs(x - y))
+
+
+def smape(y_true, y_pred, n=None):
     denominator = (np.abs(y_true) + np.abs(y_pred))
     diff = np.abs(y_true - y_pred) / denominator
     diff[denominator == 0] = 0.0
-    return 100 * np.mean(diff)
+
+    if n:
+        return 100.0 * np.sum(diff) / n
+    else:
+        return 100 * np.mean(diff)
 
 
 def wape(y_true, y_pred):
@@ -19,12 +30,25 @@ def wape(y_true, y_pred):
     return diff
 
 
-def mase(y_true, y_pred):
+def mase(y_true, y_pred, n=None, dist=False):
     """Mean Absolute Scaled Error"""
     error = np.abs(y_true - y_pred)
     denominator = np.mean(np.abs(np.diff(y_true)))
     score = error / denominator
-    return np.mean(score)
+    if n:
+        return np.sum(score) / n
+    else:
+        if dist:
+            return np.mean(score), score
+        else:
+            return np.mean(score)
+
+
+def investigate_mase(df, gtruth, pred):
+    temp = df[['class', 'datetime', gtruth, pred]]
+    temp['error'] = np.abs(temp[gtruth] - temp[pred])
+    temp['naive'] = np.mean(np.abs(np.diff(temp[gtruth])))
+    return temp
 
 
 def concordance_correlation_coefficient(y_true, y_pred,
@@ -71,6 +95,9 @@ def concordance_correlation_coefficient(y_true, y_pred,
 
     return numerator / denominator
 
+
+def pearson(y_true, y_pred):
+    return stats.pearsonr(y_true, y_pred)
 
 def kl_divergence(p, q):
     eps = 0.01
