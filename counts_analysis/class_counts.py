@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from counts_analysis.c_utils import get_units
 from validate_exp.v_utils import best_fit
+from counts_analysis.c_utils import get_units
 
 
 def set_labels_axes(ax_idx=None, logged=True, x_label=None, y_label=None, title=None):
@@ -58,8 +58,7 @@ def plot_scatterplot_all_settings(settings, data, logged=False, verbose=False):
         x, y = settings[setting]
         sns.scatterplot(x=data[x], y=data[y], ax=ax_idx)
         set_labels_axes(ax_idx=ax_idx, logged=logged,
-                        x_label='{} Counts ({})'.format(
-                            'Manual' if 'lab' not in x else 'Camera', get_units(x)),
+                        x_label='{} Counts ({})'.format('Manual' if 'lab' not in x else 'Camera', get_units(x)),
                         y_label='Camera Counts ({})'.format(get_units(y)), title=setting)
         Xfit, Yfit = best_fit(data[x], data[y], logged, verbose=verbose)
         ax_idx.plot(Xfit, Yfit, color='orange')

@@ -229,7 +229,7 @@ def pivot_counts_table(sample_method, data, le, label_col='label'):
     logger = logging.getLogger(__name__)
     # filter for only hab species
     data['class'] = data[label_col].apply(le.hab_map)
-    data = data[data['class'].isin(le.hab_classes[:-1])]
+    # data = data[data['class'].isin(le.hab_classes[:-1])]
     # pivot the data
     df = pd.pivot_table(data, values=label_col, aggfunc='count', index=['class'])
     df['class'] = df.index
@@ -298,13 +298,13 @@ def transpose_labels(df, sort=False):
     return concat
 
 
-def normalize_imaged_volume(data, sample_method):
-    if sample_method == 'pier':
+def normalize_imaged_volume(data, spc_camera):
+    if spc_camera == 'pier':
         normalization_factor = 160
     else:
         normalization_factor = 60
-    data[f'{sample_method} cells/mL'] = data[
-                                            f'{sample_method} raw count'] / normalization_factor
+    data[f'{spc_camera} cells/mL'] = data[
+                                            f'{spc_camera} raw count'] / normalization_factor
     return data
 
 def normalize_raw_count(data, sample_method):

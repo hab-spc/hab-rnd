@@ -308,7 +308,7 @@ def evaluate(eval_metrics, y_true, y_pred):
 
     """
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.WARNING)
 
     # get evaluation functions
     eval_fns = get_eval_fn()
@@ -384,6 +384,8 @@ def print_metric(stat, score_df, verbose=False):
         else:
             logger.info('\nAvg Score\n{}\n{}'.format("-" * 15, scores.loc['mean']))
             logger.info('\nMedian Score\n{}\n{}'.format("-" * 15, scores.loc['50%']))
+            logger.info('\nStd Dev\n{}\n{}'.format("-" * 15, scores.loc['std']))
+
 
 
 if __name__ == '__main__':

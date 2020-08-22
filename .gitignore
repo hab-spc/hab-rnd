@@ -2,3 +2,5 @@ temp/*
 experiments/*
 .DS_Store
 .idea/*
+phytoplankton-db
+phytoplankton-db.zip

@@ -1,6 +1,10 @@
 numpy
 pandas
 seaborn
+scipy
+scikit-learn
 matplotlib
 holoviews
 hvplot
+jupyterlab
+ipykernel

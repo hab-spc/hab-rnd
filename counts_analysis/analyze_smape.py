@@ -1,9 +1,9 @@
 import math
 
-import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
-
+import matplotlib.pyplot as plt
 
 def get_smape_vs_class_data(data, micro_counts, lab_counts, pier_counts):
     """Get smape vs class data for plotting"""
@@ -30,7 +30,7 @@ def get_smape_vs_class_data(data, micro_counts, lab_counts, pier_counts):
 def plot_smape_class_characterization(data, micro, lab, pier):
     """Plot smape class characterization"""
     smape_df = get_smape_vs_class_data(data, micro, lab, pier)
-    fig, ax = plt.subplots(1, 3)
+    fig, ax = plt.subplots(1,3)
 
     sns.barplot(x='class', y='micro_lab_smape', data=smape_df, capsize=.1)
     plt.xticks(rotation=90);

@@ -10,10 +10,11 @@ from prepare_db.parse_csv import SPCParser
 parent directory of the micro csv"""
 
 #=== Create meta file ===#
-output_csv_summer19 = '/data6/lekevin/hab-master/spici/DB/meta/summer2019/time_period.txt'
+# output_csv_summer19 = '/data6/lekevin/hab-master/spici/DB/meta/summer2019/time_period.txt'
+output_csv_summer19 = '/data6/lekevin/hab-master/spici/DB/meta/summer2019_6hr/time_period.txt'
+
 micro_csv_summer19 = '/data6/lekevin/hab-master/hab_rnd/experiments/exp_hab20_summer2019/hab_in_situ/hab_in_situ_summer19_times.csv'
-create_time_period_csv(output_csv_summer19, micro_csv_summer19, timefmt='%H:%M',
-                       offset_min=17, min_camera=0.03,
+create_time_period_csv(output_csv_summer19, micro_csv_summer19, timefmt='%H:%M', offset_hours=3, min_camera=0.03,
                        max_camera=1.0, date_col='SampleID (YYYYMMDD)',
                        time_col='Time Collected hhmm (PST)')
 
@@ -23,6 +24,8 @@ pull_images_cmd = """python spc_go.py --search-param-file=DB/meta/summer2019/tim
 os.system(pull_images_cmd)
 
 pull_images_cmd = """python spc_go.py --search-param-file=DB/meta/selfsupervision/time_period.txt --image-output-path=DB/images/selfsupervision --meta-output-path=DB/csv/hab_in_situ_selfsupervision.csv -d"""
+
+pull_images_cmd = """python spc_go.py --search-param-file=DB/meta/summer2019_6hr/time_period.txt --image-output-path=DB/images/summer2019_6hr --meta-output-path=DB/csv/hab_in_situ_summer2019-6hr.csv -d"""
 
 
 #=== Create Dataframe for getting Roi counts)

@@ -4,7 +4,6 @@ import seaborn as sns
 ERROR = 'smape'
 TIME = 'time'
 
-
 def set_labels_axes(ax_idx=None, logged=True):
     x_label = 'Time Window(sec)'
     if logged:
@@ -36,14 +35,12 @@ def plot_smape_vs_time_allsettings(lab_micro, pier_micro, pier_lab, logged=True)
 
     # Combined Settings 
     plt.figure()
-    sns.lineplot(pier_micro[TIME], pier_micro[ERROR], color='orange',
-                 label='pier - micro')
+    sns.lineplot(pier_micro[TIME], pier_micro[ERROR], color='orange', label='pier - micro')
     sns.lineplot(pier_lab[TIME], pier_lab[ERROR], color='green', label='pier - lab')
     set_labels_axes(logged=logged)
     plt.legend()
     plt.show()
-
-
+    
 def plot_smape_vs_time(data_dict, label='', color='blue', logged=True):
     """
     
@@ -55,7 +52,7 @@ def plot_smape_vs_time(data_dict, label='', color='blue', logged=True):
 
     """
     if logged:
-        fig, ax = plt.subplots(1, 2, figsize=(15, 5))
+        fig, ax = plt.subplots(1,2, figsize=(15, 5))
         ax_idx = ax[0]
         sns.lineplot(data_dict[TIME], data_dict[ERROR], ax=ax_idx, label=label,
                      color=color)
@@ -69,3 +66,4 @@ def plot_smape_vs_time(data_dict, label='', color='blue', logged=True):
         sns.lineplot(data_dict[TIME], data_dict[ERROR], label=label, color=color)
         set_labels_axes(logged=logged)
         plt.show()
+

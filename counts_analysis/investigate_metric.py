@@ -1,4 +1,3 @@
-import warnings
 from collections import defaultdict
 
 import pandas as pd
@@ -7,6 +6,7 @@ from sklearn.preprocessing import LabelBinarizer
 from counts_analysis.c_utils import COUNTS_CSV, IMG_CSV
 from validate_exp.stat_fns import *
 
+import warnings
 warnings.filterwarnings('ignore')
 
 pd.set_option('display.max_rows', None,
@@ -27,6 +27,7 @@ CLASSES = ['Akashiwo', 'Gyrodinium', 'Prorocentrum micans']
 # Load dataset
 count_df = pd.read_csv(COUNTS_CSV['counts-v9'])
 
+
 grouping = 'datetime'
 grouped_df = count_df.groupby(grouping)
 
@@ -44,14 +45,16 @@ if INVESTIGATE_SMAPE or INVESTIGATE_MASE:
         smpl_data['score'] = smpl_data['error'] / smpl_data['naive']
         print(smpl_data['score'].mean())
 
+
 grouping = 'class'
 grouped_df = count_df.groupby(grouping)
 class_counts = defaultdict(dict)
 scores = defaultdict(list)  # class: (lab, score), (pier, score)
 
+
+
 if INVESTIGATE_SMAPE or INVESTIGATE_MASE:
     from eval_counts import evaluate_counts
-
     cls = 'Akashiwo'
     camera = 'pier'
     x, y = f'{camera} gtruth raw count', f'{camera} predicted raw count'
@@ -77,6 +80,7 @@ if INVESTIGATE_SMAPE or INVESTIGATE_MASE:
         smpl_data['score'] = smpl_data['error'] / smpl_data['naive']
         print(smpl_data['score'].mean())
 
+
 for camera in datasets:
     for cls in CLASSES:
 
@@ -88,7 +92,7 @@ for camera in datasets:
         class_counts[camera][cls] = data
         print(f'Camera: {camera} Class: {cls}')
 
-        samples = list(range(2, len(data) + 1, 2))
+        samples = list(range(2, len(data)+1, 2))
 
         stats = ERROR_STATS
         for smpl_size in samples:

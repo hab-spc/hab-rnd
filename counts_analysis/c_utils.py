@@ -1,22 +1,25 @@
+import os
 import numpy as np
 import seaborn as sns
 from scipy.stats import entropy
 
+ROOT_DIR = 'phytoplankton-db'
+
 COUNTS_CSV = {
-    'counts': '/data6/phytoplankton-db/counts/master_counts_v7.csv',
+    'counts': f'{ROOT_DIR}/counts/master_counts_v11.csv',
     # truncate pier to 1000s (500s offset)
-    'counts-pier1000s': '/data6/phytoplankton-db/counts/master_counts-pier1000s.csv',
+    'counts-pier1000s': f'{ROOT_DIR}/counts/master_counts-pier1000s.csv',
     # include other counts for the time series
-    'counts-v9': '/data6/phytoplankton-db/counts/master_counts_v9.csv',  # Baseline
-    'counts-v10': '/data6/phytoplankton-db/counts/master_counts_v10.csv',  # CV model
+    'counts-v9': f'{ROOT_DIR}/counts/master_counts_v9.csv',  # Baseline
+    'counts-v10': f'{ROOT_DIR}/counts/master_counts_v10.csv',  # CV model
     # zhouyuan baseline model
-    'tsfm-counts': '/data6/phytoplankton-db/counts/master_counts_v4-tsfm.csv'
+    'tsfm-counts': f'{ROOT_DIR}/counts/master_counts_v4-tsfm.csv'
 }
 MODEL_DIR = '/data6/yuanzhouyuan/hab/hab-ml/experiments/baseline_new_weighted_loss'
 CV_MODEL_DIR = '/data6/phytoplankton-db/models'
 IMG_CSV = {
-    'lab': '/data6/phytoplankton-db/csv/hab_in_vitro_summer2019.csv',
-    'pier': '/data6/phytoplankton-db/csv/hab_in_situ_summer2019.csv',
+    'lab': f'{ROOT_DIR}/csv/hab_in_vitro_summer2019.csv',
+    'pier': f'{ROOT_DIR}/csv/hab_in_situ_summer2019.csv',
     'lab-pred': f'{MODEL_DIR}/hab_in_vitro_summer2019-predictions.csv',
     'pier-pred': f'{MODEL_DIR}/hab_in_situ_summer2019-predictions.csv',
     'lab-cv-pred': f'{CV_MODEL_DIR}/cv_hab_in_vitro_summer2019-predictions.csv',
@@ -39,12 +42,39 @@ CORRELATED_CLASSES = [
     'Prorocentrum micans'
 ]
 
+def rename_columns(df):
+    renamed_columns = []
+    for col in df.columns:
+        if 'lab gtruth' in col:
+            col = col.replace('lab gtruth', 'SPC-Lab')
+        elif 'lab predicted' in col:
+            col = col.replace('lab predicted', 'Auto-Lab')
+        elif 'pier gtruth' in col:
+            col = col.replace('pier gtruth', 'SPC-Pier')
+        elif 'pier predicted' in col:
+            col = col.replace('pier predicted', 'Auto-Pier')
+        elif 'micro' in col:
+            col = col.replace('micro', 'Lab-micro')
+            
+        if 'raw count' in col:
+            col = col.replace('raw count', 'count')
+
+        renamed_columns.append(col)
+    df = df.rename(dict(zip(df.columns, renamed_columns)), axis=1)
+    return df
 
 def set_counts(label, counts, micro_default=True):
     micro_counts = 'micro {}'.format('cells/mL' if micro_default else counts)
     lab_counts = f'lab {label} {counts}'
     pier_counts = f'pier {label} {counts}'
     return micro_counts, lab_counts, pier_counts
+
+def set_counts_v2(count_form, micro_default=True, automated=False):
+    count_type = 'Auto' if automated else 'SPC'
+    micro_counts = 'Lab-micro {}'.format('cells/mL' if micro_default else count_form)
+    lab_counts = f'{count_type}-Lab {count_form}'
+    pier_counts = f'{count_type}-Pier {count_form}'
+    return [micro_counts, lab_counts, pier_counts]
 
 
 def set_settings(counts):
@@ -73,6 +103,14 @@ def get_units(smpl_technique):
 
     else:
         return 'cells/mL'
+
+def compute_relative_abundance(raw_count, data):
+    if 'micro' in raw_count:
+        relative_column = 'micro cells/mL relative abundance'
+    else:
+        relative_column = f'{raw_count.split()[0]} {raw_count.split()[1]} relative abundance'
+    data[relative_column] = data.groupby('class')[raw_count].apply(lambda x: x / x.sum() * 100.0 if sum(x) != 0 else x)
+    return data
 
 
 def set_color_map():

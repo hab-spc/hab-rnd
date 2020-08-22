@@ -1,12 +1,10 @@
-import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import matplotlib.pyplot as plt
 from IPython.display import Markdown, display
-
 
 def printmd(string):
     display(Markdown(string))
-
 
 def plot_summary_daily_counts(date_data, rc_counts, rel_counts):
     """
